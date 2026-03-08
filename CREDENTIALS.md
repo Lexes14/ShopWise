@@ -4,9 +4,11 @@
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 ⚠️  IMPORTANT: Change all passwords immediately after first login!
+✅ **VERIFIED & WORKING** — Database updated on March 8, 2026
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## 🔐 LOGIN CREDENTIALS BY ROLE
+## 🔐 LOGIN CREDENTIALS BY ROLE (VERIFIED WORKING)
 
 ### 1. OWNER (Full System Access)
    **Username:** owner

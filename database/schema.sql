@@ -939,13 +939,13 @@ INSERT INTO roles (role_id, role_slug, role_name, description) VALUES
 -- Insert Users (passwords: Admin@2025, Manager@2025, Staff@2025, Cashier@2025, Purchase@2025, Security@2025, Accounts@2025)
 -- Cashier PIN: 123456
 INSERT INTO users (user_id, role_id, full_name, username, password_hash, pin_hash, email, phone, status) VALUES
-(1, 1, 'Juan Dela Cruz', 'owner', '$2y$12$LQv3c1yycEir3LDA.VFqfON3wpgU5CnbC6Q5lSoL7K.bPjH.Qh3Wa', NULL, 'owner@shopwise.ph', '0917-123-4567', 'active'),
-(2, 2, 'Maria Santos', 'manager', '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, 'manager@shopwise.ph', '0918-234-5678', 'active'),
-(3, 3, 'Pedro Reyes', 'inventory', '$2y$12$NPh4n.mqzZrPyIOqKL/.6.eF1SY1WbZEgXq8IpQFvKuT7xvY0qkqu', NULL, 'inventory@shopwise.ph', '0919-345-6789', 'active'),
-(4, 4, 'Anna Garcia', 'cashier', '$2y$12$VHQqPyBVXb9Gi7IjM8rI0OuGTb3yl4fQqAqfN29lUkm.nKm6uRhAu', '$2y$10$fT1jS0aK7wN0hV9sBghIjOPvZs7P4gjF9gKQg8hPLqN4I6zR9xtCS', 'cashier@shopwise.ph', '0920-456-7890', 'active'),
-(5, 5, 'Roberto Cruz', 'purchasing', '$2y$12$8h1c4K7qw8MaPqL9vW5tFuOQp8xK0lM6gN2rH3jR7sT9wU5yV1zA2', NULL, 'purchasing@shopwise.ph', '0921-567-8901', 'active'),
-(6, 6, 'Jose Ramos', 'security', '$2y$12$9i2d5L8rx9NbQpM0wX6uGvPRq9yL1mN7hO3sI4kS8uU0xV6zW2zB3', NULL, 'security@shopwise.ph', '0922-678-9012', 'active'),
-(7, 7, 'Lydia Mendoza', 'bookkeeper', '$2y$12$0j3e6M9sy0OcRpN1xY7vHwQSr0zM2nO8iP4tJ5lT9vV1yW7zA3zC4', NULL, 'accounts@shopwise.ph', '0923-789-0123', 'active');
+(1, 1, 'Juan Dela Cruz', 'owner', '$2y$12$oHfudE0lJ.NelccLjdWQ.OaT9IPgbEak9Xqup7THos8Mf.liJN7ny', NULL, 'owner@shopwise.ph', '0917-123-4567', 'active'),
+(2, 2, 'Maria Santos', 'manager', '$2y$12$ebIUIaX/QApgOtinBUad9OrIJh8fuf3USLgrGqoEo09oH5ULGP9BO', NULL, 'manager@shopwise.ph', '0918-234-5678', 'active'),
+(3, 3, 'Pedro Reyes', 'inventory', '$2y$12$EJ1iPHj96MekhkXUQY6agu/hPr6Fr47QyWn0FZe48SAlyfEiIljbq', NULL, 'inventory@shopwise.ph', '0919-345-6789', 'active'),
+(4, 4, 'Anna Garcia', 'cashier', '$2y$12$Dnqk0MJAGWPlaBH1fya5BOf9FlqdNu5dX3CSQX9N6QInpWX0a1A/e', '$2y$10$0JHgLkGI4.qFqpDjbC8e7uWkR2KZXvZ7pD5Vyg0KNV1ldGICpT1/W', 'cashier@shopwise.ph', '0920-456-7890', 'active'),
+(5, 5, 'Roberto Cruz', 'purchasing', '$2y$12$N9jJsY2EL3pyvtEwnkfwc.XZmWLFCOI3TtDNJxlN8r/KMW1jxvZwm', NULL, 'purchasing@shopwise.ph', '0921-567-8901', 'active'),
+(6, 6, 'Jose Ramos', 'security', '$2y$12$YhXw2kXz1X8oPTJpO7GpP.fGou7DOJXH.5wPeiXzIhHbqEeopCgJ6', NULL, 'security@shopwise.ph', '0922-678-9012', 'active'),
+(7, 7, 'Lydia Mendoza', 'bookkeeper', '$2y$12$P98XnAuyjlhPQeLWyu.5S./rjACs.RSAOE9al5n9zIeCv9UZ2Rj3K', NULL, 'accounts@shopwise.ph', '0923-789-0123', 'active');
 
 -- Insert Categories
 INSERT INTO categories (category_id, parent_id, category_name, icon, sort_order, status) VALUES
