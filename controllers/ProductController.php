@@ -19,10 +19,12 @@ class ProductController extends ModuleController
         $page = (int)$this->get('page', 1);
         $search = trim((string)$this->get('search', ''));
         $category = (int)$this->get('category', 0);
+        $supplier = (int)$this->get('supplier', 0);
         $status = trim((string)$this->get('status', ''));
         
-        $data = $this->model->getAll($page, 50, $search, $category, $status);
+        $data = $this->model->getAll($page, 50, $search, $category, $supplier, $status);
         $categories = $this->model->getCategories();
+        $suppliers = $this->model->getSuppliers();
         $inventory = $this->model->getInventorySummary();
         
         $this->moduleIndex($data['records'], [
@@ -32,10 +34,12 @@ class ProductController extends ModuleController
                 'total' => $data['total'],
             ],
             'categories' => $categories,
+            'suppliers' => $suppliers,
             'inventory' => $inventory,
             'filters' => [
                 'search' => $search,
                 'category' => $category,
+                'supplier' => $supplier,
                 'status' => $status,
             ],
         ]);
@@ -223,6 +227,12 @@ class ProductController extends ModuleController
 
         $items = array_map(static function (array $row): array {
             return [
+                'product_id' => (int)$row['product_id'],
+                'product_code' => $row['product_code'],
+                'product_name' => $row['product_name'],
+                'selling_price' => (float)$row['selling_price'],
+                'cost_price' => (float)$row['cost_price'],
+                'current_stock' => (int)$row['current_stock'],
                 'id' => (int)$row['product_id'],
                 'label' => $row['product_code'] . ' · ' . $row['product_name'] . ' (₱' . number_format((float)$row['selling_price'], 2) . ')',
                 'stock' => (int)$row['current_stock'],

@@ -16,7 +16,7 @@ class ModuleController extends Controller
             'title' => $this->title,
             'section' => 'index',
             'records' => $records,
-            'extra' => [],
+            'extra' => $extra,
             'csrf' => Auth::csrfGenerate(),
         ], $extra));
     }
@@ -31,7 +31,7 @@ class ModuleController extends Controller
             'title' => $this->title,
             'section' => $section,
             'records' => [],
-            'extra' => [],
+            'extra' => $extra,
             'csrf' => Auth::csrfGenerate(),
         ], $extra));
     }

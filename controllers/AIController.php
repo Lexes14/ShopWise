@@ -5,18 +5,44 @@ class AIController extends ModuleController
 {
     protected string $module = 'ai_insights';
     protected string $title = 'AI Insights';
+    private AIModel $aiModel;
+
+    public function __construct()
+    {
+        $this->aiModel = new AIModel();
+    }
 
     public function index(): void
     {
         $this->requireAuth();
+        
+        // Get summary statistics
+        $summary = $this->aiModel->getSummary();
+        
+        // Get recent recommendations
         $db = Database::getInstance();
         $stmt = $db->query(
-            "SELECT rec_id, rec_type, recommendation, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             ORDER BY generated_at DESC
-             LIMIT 100"
+            "SELECT r.rec_id, r.rec_type, r.recommendation, r.confidence_score, 
+                    r.urgency, r.status, r.generated_at, p.product_name
+             FROM ai_recommendations r
+             LEFT JOIN products p ON p.product_id = r.product_id
+             WHERE r.status = 'pending'
+             ORDER BY 
+                CASE r.urgency
+                    WHEN 'critical' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'normal' THEN 3
+                    ELSE 4
+                END,
+                r.generated_at DESC
+             LIMIT 50"
         );
-        $this->moduleIndex($stmt->fetchAll());
+        
+        $this->moduleIndex($stmt->fetchAll(), [
+            'extra' => [
+                'summary' => $summary
+            ]
+        ]);
     }
 
     public function generate(): void
@@ -195,19 +221,13 @@ class AIController extends ModuleController
     public function demand(): void
     {
         $this->requireAuth();
-        $db = Database::getInstance();
-        $stmt = $db->query(
-            "SELECT rec_id, recommendation, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             WHERE rec_type IN ('demand', 'restock')
-             ORDER BY generated_at DESC
-             LIMIT 100"
-        );
-
+        
+        $recommendations = $this->aiModel->getByType('restock', 100);
+        
         $this->moduleSection('demand', [
-            'records' => $stmt->fetchAll(),
+            'records' => $recommendations,
             'extra' => [
-                'subtitle' => 'Demand Forecasting',
+                'subtitle' => 'Demand Forecasting & Restock Recommendations',
             ],
         ]);
     }
@@ -215,19 +235,13 @@ class AIController extends ModuleController
     public function pricing(): void
     {
         $this->requireAuth();
-        $db = Database::getInstance();
-        $stmt = $db->query(
-            "SELECT rec_id, recommendation, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             WHERE rec_type = 'pricing'
-             ORDER BY generated_at DESC
-             LIMIT 100"
-        );
-
+        
+        $recommendations = $this->aiModel->getByType('pricing', 100);
+        
         $this->moduleSection('pricing', [
-            'records' => $stmt->fetchAll(),
+            'records' => $recommendations,
             'extra' => [
-                'subtitle' => 'Price Optimization',
+                'subtitle' => 'Price Optimization Suggestions',
             ],
         ]);
     }
@@ -235,19 +249,29 @@ class AIController extends ModuleController
     public function stock(): void
     {
         $this->requireAuth();
+        
         $db = Database::getInstance();
         $stmt = $db->query(
-            "SELECT rec_id, recommendation, suggested_value, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             WHERE rec_type IN ('stock', 'restock')
-             ORDER BY generated_at DESC
+            "SELECT r.*, p.product_name, p.product_code
+             FROM ai_recommendations r
+             LEFT JOIN products p ON p.product_id = r.product_id
+             WHERE r.rec_type IN ('restock', 'dead_stock')
+               AND r.status = 'pending'
+             ORDER BY 
+                CASE r.urgency
+                    WHEN 'critical' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'normal' THEN 3
+                    ELSE 4
+                END,
+                r.generated_at DESC
              LIMIT 100"
         );
-
+        
         $this->moduleSection('stock', [
             'records' => $stmt->fetchAll(),
             'extra' => [
-                'subtitle' => 'Stock Optimization',
+                'subtitle' => 'Stock Optimization & Dead Stock Alerts',
             ],
         ]);
     }
@@ -255,19 +279,13 @@ class AIController extends ModuleController
     public function bundling(): void
     {
         $this->requireAuth();
-        $db = Database::getInstance();
-        $stmt = $db->query(
-            "SELECT rec_id, recommendation, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             WHERE rec_type = 'bundling'
-             ORDER BY generated_at DESC
-             LIMIT 100"
-        );
-
+        
+        $recommendations = $this->aiModel->getByType('substitution', 100);
+        
         $this->moduleSection('bundling', [
-            'records' => $stmt->fetchAll(),
+            'records' => $recommendations,
             'extra' => [
-                'subtitle' => 'Product Bundling',
+                'subtitle' => 'Product Bundling Opportunities',
             ],
         ]);
     }
@@ -275,19 +293,29 @@ class AIController extends ModuleController
     public function anomalies(): void
     {
         $this->requireAuth();
+        
         $db = Database::getInstance();
         $stmt = $db->query(
-            "SELECT rec_id, recommendation, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             WHERE rec_type = 'anomaly'
-             ORDER BY generated_at DESC
+            "SELECT r.*, p.product_name, p.product_code
+             FROM ai_recommendations r
+             LEFT JOIN products p ON p.product_id = r.product_id
+             WHERE r.rec_type IN ('anomaly', 'dead_stock')
+               AND r.status = 'pending'
+             ORDER BY 
+                CASE r.urgency
+                    WHEN 'critical' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'normal' THEN 3
+                    ELSE 4
+                END,
+                r.generated_at DESC
              LIMIT 100"
         );
 
         $this->moduleSection('anomalies', [
             'records' => $stmt->fetchAll(),
             'extra' => [
-                'subtitle' => 'Anomaly Detection',
+                'subtitle' => 'Anomaly Detection & Alerts',
             ],
         ]);
     }
@@ -295,19 +323,29 @@ class AIController extends ModuleController
     public function segments(): void
     {
         $this->requireAuth();
+        
         $db = Database::getInstance();
         $stmt = $db->query(
-            "SELECT rec_id, recommendation, confidence_score, urgency, status, generated_at
-             FROM ai_recommendations
-             WHERE rec_type = 'segment'
-             ORDER BY generated_at DESC
+            "SELECT r.*, s.supplier_name
+             FROM ai_recommendations r
+             LEFT JOIN suppliers s ON s.supplier_id = r.supplier_id
+             WHERE r.rec_type = 'supplier'
+               AND r.status = 'pending'
+             ORDER BY 
+                CASE r.urgency
+                    WHEN 'critical' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'normal' THEN 3
+                    ELSE 4
+                END,
+                r.generated_at DESC
              LIMIT 100"
         );
 
         $this->moduleSection('segments', [
             'records' => $stmt->fetchAll(),
             'extra' => [
-                'subtitle' => 'Customer Segmentation',
+                'subtitle' => 'Supplier Performance & Recommendations',
             ],
         ]);
     }

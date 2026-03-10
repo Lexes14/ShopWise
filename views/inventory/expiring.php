@@ -1,3 +1,8 @@
+<?php
+$batches = $records ?? [];
+$alerts = $extra['expiry_alerts'] ?? [];
+?>
+
 <div class="page-header gap-3 mb-4">
     <div>
         <h5 class="mb-1">Expiring Batches</h5>
@@ -72,17 +77,17 @@
                                 <code><?= e((string)$batch['batch_number']) ?></code>
                             </td>
                             <td class="text-end">
-                                <?= e((string)$batch['quantity']) ?> units
+                                <?= e((string)$batch['qty_remaining']) ?> units
                             </td>
                             <td>
                                 <?php
-                                $expDate = new DateTime($batch['expiry_date']);
+                                $expDate = new DateTime($batch['expiration_date']);
                                 echo $expDate->format('M d, Y');
                                 ?>
                             </td>
                             <td class="text-center">
                                 <?php
-                                $daysLeft = (int)($batch['days_until_expiry'] ?? 0);
+                                $daysLeft = (int)($batch['days_left'] ?? 0);
                                 $dayClass = match(true) {
                                     $daysLeft < 0 => 'text-danger fw-700',
                                     $daysLeft < 7 => 'text-danger fw-700',
@@ -158,7 +163,7 @@
                                                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                             </div>
                                             <div class="modal-body">
-                                                Create waste adjustment for <strong><?= e((string)$batch['quantity']) ?> units</strong> of batch <strong><?= e((string)$batch['batch_number']) ?></strong>?
+                                                Create waste adjustment for <strong><?= e((string)$batch['qty_remaining']) ?> units</strong> of batch <strong><?= e((string)$batch['batch_number']) ?></strong>?
                                             </div>
                                             <div class="modal-footer">
                                                 <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -166,7 +171,7 @@
                                                     <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
                                                     <input type="hidden" name="product_id" value="<?= e((string)$batch['product_id']) ?>">
                                                     <input type="hidden" name="adjustment_type" value="removal">
-                                                    <input type="hidden" name="quantity" value="<?= e((string)$batch['quantity']) ?>">
+                                                    <input type="hidden" name="quantity" value="<?= e((string)$batch['qty_remaining']) ?>">
                                                     <input type="hidden" name="reason" value="Expired batch discard - Batch #<?= e((string)$batch['batch_number']) ?>">
                                                     <button type="submit" class="btn btn-sm btn-danger">Discard</button>
                                                 </form>

@@ -160,10 +160,12 @@ class InventoryController extends ModuleController
     {
         $this->requireAuth();
         
-        $stocktakes = $this->model->getStocktakes();
+        $stocktakesData = $this->model->getStocktakes();
         
-        $this->moduleIndex($stocktakes, [
+        $this->moduleIndex([], [
             'section' => 'stocktake',
+            'activeStocktakes' => $stocktakesData['active'] ?? [],
+            'completedStocktakes' => $stocktakesData['completed'] ?? [],
         ]);
     }
 
@@ -190,18 +192,33 @@ class InventoryController extends ModuleController
         Auth::csrfVerify();
 
         $stocktakeId = (int)$id;
+        $redirect = '/inventory/stocktake/' . $stocktakeId . '/count';
+        $respondJson = $this->isAjax();
         $productId = (int)$this->post('product_id', 0);
         $countedQty = (int)$this->post('counted_quantity', 0);
 
         if ($productId <= 0 || $countedQty < 0) {
-            $this->json(['success' => false, 'message' => 'Invalid product or quantity.'], 400);
+            if ($respondJson) {
+                $this->json(['success' => false, 'message' => 'Invalid product or quantity.'], 400);
+            }
+            $this->done('Invalid product or quantity.', $redirect, 'danger');
+            return;
         }
 
-        if ($this->model->recordStocktakeCount($stocktakeId, $productId, $countedQty)) {
-            $this->json(['success' => true, 'message' => 'Count recorded.']);
-        } else {
+        $currentUserId = (int)($this->user()['user_id'] ?? 0);
+
+        if ($this->model->recordStocktakeCount($stocktakeId, $productId, $countedQty, $currentUserId > 0 ? $currentUserId : null)) {
+            if ($respondJson) {
+                $this->json(['success' => true, 'message' => 'Count recorded.']);
+            }
+            $this->done('Count recorded.', $redirect, 'success');
+            return;
+        }
+
+        if ($respondJson) {
             $this->json(['success' => false, 'message' => 'Failed to record count.'], 500);
         }
+        $this->done('Failed to record count.', $redirect, 'danger');
     }
 
     public function finalizeStocktake(string $id): void
@@ -209,13 +226,41 @@ class InventoryController extends ModuleController
         $this->requireAuth(['owner', 'manager']);
         Auth::csrfVerify();
 
-        if ($this->model->finalizeStocktake((int)$id)) {
+        $currentUserId = (int)($this->user()['user_id'] ?? 0);
+
+        if ($this->model->finalizeStocktake((int)$id, $currentUserId > 0 ? $currentUserId : null)) {
             $logger = new Logger();
             $logger->log('inventory', 'finalize_stocktake', (int)$id, null, [], 'Stocktake finalized.');
             $this->done('Stocktake #' . (int)$id . ' finalized.', '/inventory/stocktake');
         } else {
             $this->done('Failed to finalize stocktake.', '/inventory/stocktake');
         }
+    }
+
+    public function countingPage(string $id): void
+    {
+        $this->requireAuth(['owner', 'manager', 'inventory_staff']);
+        
+        $stocktakeId = (int)$id;
+        $items = $this->model->getStocktakeItems($stocktakeId);
+        
+        if (empty($items)) {
+            $this->done('Stocktake not found or has no products.', '/inventory/stocktake');
+            return;
+        }
+        
+        // Count stated vs pending
+        $countedCount = count(array_filter($items, fn($item) => $item['status'] === 'counted'));
+        $totalCount = count($items);
+        
+        $this->render('inventory/stocktake-counting', [
+            'stocktakeId' => $stocktakeId,
+            'items' => $items,
+            'countedCount' => $countedCount,
+            'totalCount' => $totalCount,
+            'progressPercent' => $totalCount > 0 ? round(($countedCount / $totalCount) * 100) : 0,
+            'csrf' => Auth::csrfGenerate(),
+        ]);
     }
 
     public function shelves(): void

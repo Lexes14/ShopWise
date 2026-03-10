@@ -60,11 +60,11 @@
 <div class="card card-soft mb-4">
     <div class="card-body">
         <form method="GET" action="<?= e(BASE_URL) ?>/products" class="row g-3">
-            <div class="col-sm-6 col-md-3">
+            <div class="col-sm-6 col-md-2">
                 <label class="form-label small">Search</label>
                 <input type="text" name="search" class="form-control" placeholder="Product name or code..." value="<?= e($filters['search'] ?? '') ?>">
             </div>
-            <div class="col-sm-6 col-md-3">
+            <div class="col-sm-6 col-md-2">
                 <label class="form-label small">Category</label>
                 <select name="category" class="form-select">
                     <option value="0">All Categories</option>
@@ -76,6 +76,17 @@
                 </select>
             </div>
             <div class="col-sm-6 col-md-3">
+                <label class="form-label small">Supplier</label>
+                <select name="supplier" class="form-select">
+                    <option value="0">All Suppliers</option>
+                    <?php foreach (($suppliers ?? []) as $sup): ?>
+                        <option value="<?= e((string)$sup['supplier_id']) ?>" <?php if (($filters['supplier'] ?? 0) == $sup['supplier_id']) echo 'selected'; ?>>
+                            <?= e($sup['supplier_name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-sm-6 col-md-2">
                 <label class="form-label small">Status</label>
                 <select name="status" class="form-select">
                     <option value="">All Status</option>
@@ -98,13 +109,14 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
-                        <th style="width: 12%;">Code</th>
-                        <th style="width: 28%;">Product Name</th>
+                        <th style="width: 10%;">Code</th>
+                        <th style="width: 22%;">Product Name</th>
                         <th style="width: 12%;">Category</th>
-                        <th style="width: 10%;" class="text-end">Cost</th>
-                        <th style="width: 10%;" class="text-end">Price</th>
-                        <th style="width: 12%;" class="text-end">Stock</th>
-                        <th style="width: 16%;" class="text-center">Actions</th>
+                        <th style="width: 14%;">Supplier</th>
+                        <th style="width: 9%;" class="text-end">Cost</th>
+                        <th style="width: 9%;" class="text-end">Price</th>
+                        <th style="width: 10%;" class="text-end">Stock</th>
+                        <th style="width: 14%;" class="text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -118,6 +130,13 @@
                             </td>
                             <td>
                                 <span class="badge text-bg-light"><?= e($product['category_name']) ?></span>
+                            </td>
+                            <td>
+                                <?php if (!empty($product['primary_supplier_name'])): ?>
+                                    <span class="text-muted small">🏢 <?= e($product['primary_supplier_name']) ?></span>
+                                <?php else: ?>
+                                    <span class="text-muted small">—</span>
+                                <?php endif; ?>
                             </td>
                             <td class="text-end">
                                 ₱<?= e(number_format((float)$product['cost_price'], 2)) ?>
@@ -179,15 +198,24 @@
         
         <!-- Pagination -->
         <?php if (($pagination['pages'] ?? 1) > 1): ?>
+            <?php
+            // Build filter query string
+            $filterParams = [];
+            if ($filters['search']) $filterParams[] = 'search=' . urlencode($filters['search']);
+            if ($filters['category']) $filterParams[] = 'category=' . $filters['category'];
+            if ($filters['supplier']) $filterParams[] = 'supplier=' . $filters['supplier'];
+            if ($filters['status']) $filterParams[] = 'status=' . $filters['status'];
+            $filterQuery = !empty($filterParams) ? '&' . implode('&', $filterParams) : '';
+            ?>
             <div class="card-footer d-flex justify-content-center">
                 <nav aria-label="Page navigation">
                     <ul class="pagination mb-0">
                         <?php if ($pagination['page'] > 1): ?>
                             <li class="page-item">
-                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=1<?php if ($filters['search']) echo '&search=' . urlencode($filters['search']); if ($filters['category']) echo '&category=' . $filters['category']; if ($filters['status']) echo '&status=' . $filters['status']; ?>">First</a>
+                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=1<?= $filterQuery ?>">First</a>
                             </li>
                             <li class="page-item">
-                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=<?= e((string)($pagination['page'] - 1)) ?><?php if ($filters['search']) echo '&search=' . urlencode($filters['search']); if ($filters['category']) echo '&category=' . $filters['category']; if ($filters['status']) echo '&status=' . $filters['status']; ?>">Previous</a>
+                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=<?= e((string)($pagination['page'] - 1)) ?><?= $filterQuery ?>">Previous</a>
                             </li>
                         <?php endif; ?>
                         
@@ -197,10 +225,10 @@
                         
                         <?php if ($pagination['page'] < $pagination['pages']): ?>
                             <li class="page-item">
-                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=<?= e((string)($pagination['page'] + 1)) ?><?php if ($filters['search']) echo '&search=' . urlencode($filters['search']); if ($filters['category']) echo '&category=' . $filters['category']; if ($filters['status']) echo '&status=' . $filters['status']; ?>">Next</a>
+                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=<?= e((string)($pagination['page'] + 1)) ?><?= $filterQuery ?>">Next</a>
                             </li>
                             <li class="page-item">
-                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=<?= e((string)$pagination['pages']) ?><?php if ($filters['search']) echo '&search=' . urlencode($filters['search']); if ($filters['category']) echo '&category=' . $filters['category']; if ($filters['status']) echo '&status=' . $filters['status']; ?>">Last</a>
+                                <a class="page-link" href="<?= e(BASE_URL) ?>/products?page=<?= e((string)$pagination['pages']) ?><?= $filterQuery ?>">Last</a>
                             </li>
                         <?php endif; ?>
                     </ul>

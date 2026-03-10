@@ -26,6 +26,7 @@ class ProductModel
         int $limit = 50,
         string $search = '',
         int $categoryId = 0,
+        int $supplierId = 0,
         string $status = ''
     ): array {
         $offset = ($page - 1) * $limit;
@@ -46,6 +47,12 @@ class ProductModel
             $params[] = $categoryId;
         }
         
+        if ($supplierId > 0) {
+            $where[] = "(p.primary_supplier_id = ? OR p.secondary_supplier_id = ?)";
+            $params[] = $supplierId;
+            $params[] = $supplierId;
+        }
+        
         if ($status !== '') {
             $where[] = "p.status = ?";
             $params[] = $status;
@@ -60,9 +67,11 @@ class ProductModel
         
         $stmt = $this->db->prepare(
             "SELECT p.product_id, p.product_code, p.product_name, p.selling_price, p.cost_price,
-                    p.current_stock, p.reorder_point, p.status, c.category_name
+                    p.current_stock, p.reorder_point, p.status, c.category_name,
+                    s.supplier_name as primary_supplier_name
              FROM products p
              JOIN categories c ON c.category_id = p.category_id
+             LEFT JOIN suppliers s ON s.supplier_id = p.primary_supplier_id
              WHERE $whereClause
              ORDER BY p.product_name ASC
              LIMIT ? OFFSET ?"
@@ -267,7 +276,7 @@ class ProductModel
     public function search(string $query, int $limit = 20): array
     {
         $stmt = $this->db->prepare(
-            "SELECT product_id, product_code, product_name, selling_price, current_stock
+            "SELECT product_id, product_code, product_name, selling_price, cost_price, current_stock
              FROM products
              WHERE status = 'active' AND (product_name LIKE ? OR product_code LIKE ?)
              ORDER BY product_name ASC

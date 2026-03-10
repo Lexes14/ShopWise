@@ -34,6 +34,73 @@ class ReportController extends ModuleController
         $this->moduleIndex($stmt->fetchAll(), ['section' => 'sales']);
     }
 
+    public function customerTransactions(): void
+    {
+        $this->requireAuth(['owner', 'manager']);
+        $db = Database::getInstance();
+
+        $customerId = (int)$this->get('customer_id', 0);
+        $startDate = trim((string)$this->get('start_date', date('Y-m-d', strtotime('-30 days'))));
+        $endDate = trim((string)$this->get('end_date', date('Y-m-d')));
+
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) {
+            $startDate = date('Y-m-d', strtotime('-30 days'));
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate)) {
+            $endDate = date('Y-m-d');
+        }
+
+        $where = [
+            "t.status = 'completed'",
+            'DATE(t.created_at) BETWEEN ? AND ?',
+        ];
+        $params = [$startDate, $endDate];
+
+        if ($customerId > 0) {
+            $where[] = 't.customer_id = ?';
+            $params[] = $customerId;
+        }
+
+        $sql =
+            "SELECT t.transaction_id, t.transaction_number, t.or_number, t.created_at,
+                    COALESCE(c.full_name, 'Walk-in Customer') AS customer_name,
+                    COALESCE(c.phone, '-') AS customer_phone,
+                    t.customer_type, t.payment_method, t.total_amount
+             FROM transactions t
+             LEFT JOIN customers c ON c.customer_id = t.customer_id
+             WHERE " . implode(' AND ', $where) . "
+             ORDER BY t.created_at DESC
+             LIMIT 300";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $records = $stmt->fetchAll();
+
+        $customerStmt = $db->query(
+            "SELECT customer_id, full_name, phone
+             FROM customers
+             WHERE status = 'active'
+             ORDER BY full_name ASC
+             LIMIT 300"
+        );
+
+        $summary = [
+            'transactions' => count($records),
+            'total_sales' => (float)array_sum(array_map(static fn(array $row): float => (float)$row['total_amount'], $records)),
+        ];
+
+        $this->moduleSection('customer_transactions', ['extra' => [
+            'records' => $records,
+            'customers' => $customerStmt->fetchAll(),
+            'filters' => [
+                'customer_id' => $customerId,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+            ],
+            'summary' => $summary,
+        ]]);
+    }
+
     public function profit(): void
     {
         $this->requireAuth(['owner', 'manager', 'bookkeeper']);

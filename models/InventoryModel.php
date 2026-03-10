@@ -62,7 +62,11 @@ class InventoryModel
                     p.reorder_point, p.minimum_stock, p.maximum_stock, p.cost_price, p.selling_price,
                     c.category_name,
                     (SELECT COUNT(*) FROM batches WHERE product_id = p.product_id AND status='active') as batch_count,
-                    (SELECT COALESCE(MIN(expiration_date), NULL) FROM batches WHERE product_id = p.product_id AND status='active') as next_expiry
+                    (SELECT COALESCE(MIN(expiration_date), NULL) FROM batches WHERE product_id = p.product_id AND status='active') as next_expiry,
+                    CASE 
+                        WHEN (SELECT COALESCE(MIN(expiration_date), NULL) FROM batches WHERE product_id = p.product_id AND status='active') IS NULL THEN NULL
+                        ELSE DATEDIFF((SELECT COALESCE(MIN(expiration_date), NULL) FROM batches WHERE product_id = p.product_id AND status='active'), CURDATE())
+                    END as days_to_expiry
              FROM products p
              JOIN categories c ON c.category_id = p.category_id
              WHERE $whereClause
@@ -121,7 +125,7 @@ class InventoryModel
              JOIN products p ON p.product_id = b.product_id
              WHERE b.status = 'active'
                AND b.expiration_date IS NOT NULL
-               AND b.expiration_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+               AND DATEDIFF(b.expiration_date, CURDATE()) <= ?
              ORDER BY b.expiration_date ASC
              LIMIT ?"
         );
@@ -341,18 +345,28 @@ class InventoryModel
     /**
      * Record stocktake count for a product
      */
-    public function recordStocktakeCount(int $stocktakeId, int $productId, int $countedQty): bool
+    public function recordStocktakeCount(int $stocktakeId, int $productId, int $countedQty, ?int $countedBy = null): bool
     {
+        $sessionStmt = $this->db->prepare(
+            "SELECT session_id FROM stocktake_sessions WHERE session_id = ? AND status = 'in_progress' LIMIT 1"
+        );
+        $sessionStmt->execute([$stocktakeId]);
+        if (!$sessionStmt->fetchColumn()) {
+            return false;
+        }
+
         $expectedStmt = $this->db->prepare("SELECT current_stock FROM products WHERE product_id = ? LIMIT 1");
         $expectedStmt->execute([$productId]);
         $expectedQty = (int)($expectedStmt->fetchColumn() ?: 0);
+
+        $countedBy = $countedBy !== null && $countedBy > 0 ? $countedBy : null;
 
         $updateStmt = $this->db->prepare(
             "UPDATE stocktake_items
              SET counted_qty = ?, counted_by = ?, counted_at = NOW()
              WHERE session_id = ? AND product_id = ?"
         );
-        $updateStmt->execute([$countedQty, (int)($_SESSION['user_id'] ?? 0), $stocktakeId, $productId]);
+        $updateStmt->execute([$countedQty, $countedBy, $stocktakeId, $productId]);
 
         if ($updateStmt->rowCount() > 0) {
             return true;
@@ -362,13 +376,13 @@ class InventoryModel
             "INSERT INTO stocktake_items (session_id, product_id, expected_qty, counted_qty, counted_by, counted_at)
              VALUES (?, ?, ?, ?, ?, NOW())"
         );
-        return $stmt->execute([$stocktakeId, $productId, $expectedQty, $countedQty, (int)($_SESSION['user_id'] ?? 0)]);
+        return $stmt->execute([$stocktakeId, $productId, $expectedQty, $countedQty, $countedBy]);
     }
 
     /**
      * Finalize stocktake and update inventory
      */
-    public function finalizeStocktake(int $stocktakeId): bool
+    public function finalizeStocktake(int $stocktakeId, ?int $completedBy = null): bool
     {
         // Get all stocktake items
         $itemStmt = $this->db->prepare(
@@ -397,12 +411,34 @@ class InventoryModel
         }
         
         // Update stocktake status
+        $completedBy = $completedBy !== null && $completedBy > 0 ? $completedBy : null;
+
         $updateStmt = $this->db->prepare(
             "UPDATE stocktake_sessions
              SET status = 'completed', completed_at = NOW(), completed_by = ?
              WHERE session_id = ?"
         );
-        return $updateStmt->execute([(int)($_SESSION['user_id'] ?? 0), $stocktakeId]);
+        return $updateStmt->execute([$completedBy, $stocktakeId]);
+    }
+
+    /**
+     * Get products for stocktake counting
+     */
+    public function getStocktakeItems(int $stocktakeId): array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT p.product_id, p.product_code, p.product_name, p.current_stock,
+                    c.category_name,
+                    si.item_id, si.counted_qty,
+                    CASE WHEN si.counted_qty IS NOT NULL THEN 'counted' ELSE 'pending' END as status
+             FROM products p
+             JOIN categories c ON c.category_id = p.category_id
+             LEFT JOIN stocktake_items si ON si.session_id = ? AND si.product_id = p.product_id
+             WHERE p.status = 'active'
+             ORDER BY CASE WHEN si.counted_qty IS NOT NULL THEN 1 ELSE 0 END ASC, p.product_name ASC"
+        );
+        $stmt->execute([$stocktakeId]);
+        return $stmt->fetchAll() ?: [];
     }
 
     /**

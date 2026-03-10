@@ -75,11 +75,39 @@ class Logger
                 $ip,
                 substr($userAgent, 0, 255),
             ]);
+            
+            // Trigger AI analysis for business-critical actions
+            $this->triggerAIAnalysis($module, $action, $recordId, $newValue);
+            
         } catch (\Throwable $e) {
             // Log failure to file - never propagate
             $this->writeToFile(
                 "[AUDIT_LOG_FAIL] {$module}.{$action} - " . $e->getMessage()
             );
+        }
+    }
+    
+    /**
+     * Trigger AI analysis after logging certain actions
+     */
+    private function triggerAIAnalysis(string $module, string $action, ?int $recordId, mixed $data): void
+    {
+        try {
+            // Only analyze key business actions
+            $analyzableModules = ['pos', 'purchase_orders', 'inventory', 'products', 'promotions'];
+            
+            if (!in_array($module, $analyzableModules)) {
+                return;
+            }
+            
+            // Load AI model and analyze
+            require_once __DIR__ . '/../models/AIModel.php';
+            $aiModel = new AIModel();
+            $aiModel->analyzeAction($module, $action, $recordId, $data);
+            
+        } catch (\Throwable $e) {
+            // Silent fail - AI analysis should never break business operations
+            error_log("[AI_ANALYSIS_FAIL] {$module}.{$action} - " . $e->getMessage());
         }
     }
 

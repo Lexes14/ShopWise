@@ -125,7 +125,7 @@ class POSController extends Controller
 
         $placeholders = implode(',', array_fill(0, count($productIds), '?'));
         $stmt = $db->prepare(
-            "SELECT product_id, product_name, selling_price, avg_cost_price, cost_price, current_stock, is_vatable
+            "SELECT product_id, product_name, selling_price, avg_cost_price, cost_price, current_stock, is_vatable, primary_supplier_id
              FROM products
              WHERE product_id IN ($placeholders) AND status = 'active'"
         );
@@ -248,6 +248,8 @@ class POSController extends Controller
                 ) VALUES (?, ?, ?, 'sale', 0, ?, 'transaction', ?, ?, ?, NOW())"
             );
 
+            $replenishmentLines = [];
+
             foreach ($cartMap as $productId => $qty) {
                 $product = $products[$productId];
                 $unitPrice = (float)$product['selling_price'];
@@ -278,10 +280,22 @@ class POSController extends Controller
                     $cashierId,
                     'POS checkout',
                 ]);
+
+                $replenishmentLines[] = [
+                    'product_id' => $productId,
+                    'qty' => $qty,
+                    'unit_cost' => $costPrice,
+                ];
             }
 
             $this->applyCustomerPoints($db, $customerId, $transactionId, $pointsEarned, $pointsRedeemed, $totalAmount);
             $this->applyShiftSales($db, $shiftId, $paymentMethod, $totalAmount);
+
+            $autoQueueResult = ['queued_items' => 0, 'po_count' => 0, 'skipped_items' => 0];
+            if (!empty($replenishmentLines)) {
+                $poModel = new PurchaseOrderModel();
+                $autoQueueResult = $poModel->queueAutoReplenishmentFromSale($replenishmentLines, $cashierId);
+            }
 
             $logger = new Logger();
             $logger->log('pos', 'checkout', $transactionId, null, [
@@ -289,6 +303,9 @@ class POSController extends Controller
                 'total' => $totalAmount,
                 'payment_method' => $paymentMethod,
                 'items' => count($cartMap),
+                'auto_po_count' => (int)$autoQueueResult['po_count'],
+                'auto_po_qty' => (int)$autoQueueResult['queued_items'],
+                'auto_po_skipped' => (int)$autoQueueResult['skipped_items'],
             ], 'POS checkout completed.');
 
             $db->commit();

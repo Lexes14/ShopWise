@@ -88,10 +88,10 @@ $products = $products ?? ($extra['products'] ?? []);
                                 <br><small class="text-muted"><?= e($item['product_code'] ?? '') ?></small>
                             </td>
                             <td><?= intval($item['quantity']) ?></td>
-                            <td>₦<?= number_format($item['unit_price'], 2) ?></td>
-                            <td class="fw-600">₦<?= number_format($lineTotal, 2) ?></td>
+                            <td>₱<?= number_format($item['unit_price'], 2) ?></td>
+                            <td class="fw-600">₱<?= number_format($lineTotal, 2) ?></td>
                             <td>
-                                <form method="POST" action="<?= e(BASE_URL) ?>/purchase-orders/<?= intval($po['po_id']) ?>/item/<?= intval($item['po_item_id']) ?>/delete" style="display:inline;">
+                                <form method="POST" action="<?= e(BASE_URL) ?>/purchase-orders/items/<?= intval($item['po_item_id']) ?>/remove" style="display:inline;">
                                     <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Remove this item?');">Remove</button>
                                 </form>
@@ -102,7 +102,7 @@ $products = $products ?? ($extra['products'] ?? []);
                     <tfoot>
                         <tr class="border-top-2">
                             <td colspan="3" class="text-end fw-600">Total:</td>
-                            <td class="fw-600" style="font-size: 16px;">₦<?= number_format($total, 2) ?></td>
+                            <td class="fw-600" style="font-size: 16px;">₱<?= number_format($total, 2) ?></td>
                             <td></td>
                         </tr>
                     </tfoot>
@@ -122,8 +122,9 @@ $products = $products ?? ($extra['products'] ?? []);
                 <h6 class="mb-0">Add Line Item</h6>
             </div>
             <div class="card-body">
-                <form method="POST" action="<?= e(BASE_URL) ?>/purchase-orders/<?= intval($po['po_id']) ?>/item" class="row g-3">
+                <form method="POST" action="<?= e(BASE_URL) ?>/purchase-orders/add-item" class="row g-3">
                     <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
+                    <input type="hidden" name="po_id" value="<?= intval($po['po_id']) ?>">
                     
                     <div class="col-md-6">
                         <label class="form-label fw-600">Product *</label>
@@ -138,7 +139,7 @@ $products = $products ?? ($extra['products'] ?? []);
                     </div>
                     
                     <div class="col-md-3">
-                        <label class="form-label fw-600">Unit Price (₦) *</label>
+                        <label class="form-label fw-600">Unit Price (₱) *</label>
                         <input type="number" name="unit_price" class="form-control" min="0" step="0.01" placeholder="0.00" required>
                     </div>
                     
@@ -158,15 +159,15 @@ $products = $products ?? ($extra['products'] ?? []);
                 <h6 class="mb-3">Order Summary</h6>
                 <div class="d-flex justify-content-between mb-2">
                     <span>Subtotal:</span>
-                    <strong>₦<?= number_format($total, 2) ?></strong>
+                    <strong>₱<?= number_format($total, 2) ?></strong>
                 </div>
                 <div class="d-flex justify-content-between mb-3">
                     <span>Tax (0%):</span>
-                    <strong>₦0.00</strong>
+                    <strong>₱0.00</strong>
                 </div>
                 <div class="border-top pt-2 d-flex justify-content-between">
                     <span class="fw-600">Total:</span>
-                    <strong style="font-size: 18px;">₦<?= number_format($total, 2) ?></strong>
+                    <strong style="font-size: 18px;">₱<?= number_format($total, 2) ?></strong>
                 </div>
             </div>
         </div>
@@ -220,7 +221,7 @@ document.getElementById('productSearch').addEventListener('input', function(e) {
                 data.items.forEach(product => {
                     let div = document.createElement('div');
                     div.className = 'list-group-item list-group-item-action cursor-pointer';
-                    div.innerHTML = `<strong>${product.product_name}</strong> (${product.product_code})<br><small class="text-muted">₦${parseFloat(product.cost_price).toLocaleString('en-NG', {minimumFractionDigits: 2})}</small>`;
+                    div.innerHTML = `<strong>${product.product_name}</strong> (${product.product_code})<br><small class="text-muted">₱${parseFloat(product.cost_price).toFixed(2)}</small>`;
                     div.onclick = () => {
                         document.getElementById('product_id').value = product.product_id;
                         document.getElementById('productSearch').value = product.product_name;

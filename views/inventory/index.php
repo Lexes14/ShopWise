@@ -153,21 +153,36 @@
                                 <?php
                                 $stock = (int)$item['current_stock'];
                                 $reorder = (int)$item['reorder_point'];
+                                $daysToExpiry = $item['days_to_expiry'] !== null ? (int)$item['days_to_expiry'] : null;
                                 
-                                if ($stock === 0) {
+                                // Determine expiry status first (highest priority)
+                                if ($daysToExpiry !== null && $daysToExpiry < 0) {
+                                    $statusBadge = '<span class="badge text-bg-danger fw-600">⚠ EXPIRED</span>';
+                                } elseif ($daysToExpiry !== null && $daysToExpiry <= 7) {
+                                    $statusBadge = '<span class="badge text-bg-danger fw-600">🔴 CRITICAL</span>';
+                                } elseif ($daysToExpiry !== null && $daysToExpiry <= 14) {
+                                    $statusBadge = '<span class="badge text-bg-danger">🟠 EXPIRING SOON</span>';
+                                } elseif ($stock === 0) {
                                     $statusBadge = '<span class="badge text-bg-danger">Out of Stock</span>';
-                                    $statusIcon = '✗';
                                 } elseif ($stock <= $reorder) {
                                     $statusBadge = '<span class="badge text-bg-warning text-dark">Low Stock</span>';
-                                    $statusIcon = '⚠';
                                 } else {
                                     $statusBadge = '<span class="badge text-bg-success">OK</span>';
-                                    $statusIcon = '✓';
                                 }
                                 ?>
                                 <div><?= $statusBadge ?></div>
                                 <?php if ($item['next_expiry']): ?>
-                                    <small class="text-muted d-block mt-1">Expires: <?= e(date('M d, Y', strtotime($item['next_expiry']))) ?></small>
+                                    <?php if ($daysToExpiry !== null): ?>
+                                        <?php if ($daysToExpiry < 0): ?>
+                                            <small class="text-danger d-block mt-1 fw-600">Expired <?= abs($daysToExpiry) ?> days ago</small>
+                                        <?php elseif ($daysToExpiry === 0): ?>
+                                            <small class="text-danger d-block mt-1 fw-600">Expires TODAY</small>
+                                        <?php else: ?>
+                                            <small class="text-muted d-block mt-1">Expires in <?= $daysToExpiry ?> day<?= $daysToExpiry === 1 ? '' : 's' ?></small>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <small class="text-muted d-block mt-1">Expires: <?= e(date('M d, Y', strtotime($item['next_expiry']))) ?></small>
+                                    <?php endif; ?>
                                 <?php endif; ?>
                             </td>
                         </tr>

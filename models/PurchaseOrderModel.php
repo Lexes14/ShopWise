@@ -436,18 +436,127 @@ class PurchaseOrderModel
     public function markReceived($po_id, $received_date = null)
     {
         try {
+            $po_id = (int)$po_id;
             $received_date = $received_date ?? date('Y-m-d H:i:s');
+            $delivery_date = date('Y-m-d', strtotime($received_date));
             
+            // Start transaction
+            $this->db->beginTransaction();
+            
+            // Get PO details
+            $po = $this->getById($po_id);
+            if (!$po) {
+                throw new \Exception('Purchase order not found');
+            }
+            
+            // Get all items in this PO
+            $items = $this->getItems($po_id);
+            if (empty($items)) {
+                throw new \Exception('No items found in purchase order');
+            }
+            
+            $total_items_received = 0;
+            $total_qty_received = 0;
+            
+            // Process each item
+            foreach ($items as $item) {
+                $product_id = (int)$item['product_id'];
+                $qty_ordered = (int)$item['qty_ordered'];
+                $unit_cost = (float)$item['unit_cost'];
+                
+                // Generate batch number
+                $batch_number = 'PO' . $po['po_number'] . '-P' . $product_id . '-' . date('Ymd');
+                
+                // Create batch record
+                $stmt = $this->db->prepare(
+                    "INSERT INTO batches (
+                        product_id, po_id, batch_number, qty_received, qty_remaining,
+                        delivery_date, cost_price, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')"
+                );
+                $stmt->execute([
+                    $product_id,
+                    $po_id,
+                    $batch_number,
+                    $qty_ordered,
+                    $qty_ordered,
+                    $delivery_date,
+                    $unit_cost
+                ]);
+                
+                $batch_id = (int)$this->db->lastInsertId();
+                
+                // Update product stock
+                $stmt = $this->db->prepare(
+                    "UPDATE products 
+                     SET current_stock = current_stock + ?,
+                         avg_cost_price = (
+                             (current_stock * COALESCE(avg_cost_price, cost_price) + ? * ?) / 
+                             NULLIF(current_stock + ?, 0)
+                         ),
+                         updated_at = NOW()
+                     WHERE product_id = ?"
+                );
+                $stmt->execute([
+                    $qty_ordered,
+                    $qty_ordered,
+                    $unit_cost,
+                    $qty_ordered,
+                    $product_id
+                ]);
+                
+                // Create stock movement record
+                $stmt = $this->db->prepare(
+                    "INSERT INTO stock_movements (
+                        product_id, batch_id, movement_type, quantity_in,
+                        reference_type, reference_id, notes, created_at
+                    ) VALUES (?, ?, 'delivery', ?, 'purchase_order', ?, ?, ?)"
+                );
+                $stmt->execute([
+                    $product_id,
+                    $batch_id,
+                    $qty_ordered,
+                    $po_id,
+                    'PO ' . $po['po_number'] . ' received',
+                    $received_date
+                ]);
+                
+                $total_items_received++;
+                $total_qty_received += $qty_ordered;
+            }
+            
+            // Update PO status
             $stmt = $this->db->prepare(
-                "UPDATE {$this->table} SET status = 'fully_received', actual_delivery = ? WHERE po_id = ?"
+                "UPDATE {$this->table} 
+                 SET status = 'fully_received', 
+                     actual_delivery = ?,
+                     updated_at = NOW()
+                 WHERE po_id = ?"
             );
-            $stmt->execute([$received_date, (int)$po_id]);
+            $stmt->execute([$received_date, $po_id]);
             
-            $this->logger->log('purchase_orders', 'mark_received', (int)$po_id, null,
-                ['received_at' => $received_date], 'PO marked as received');
+            // Log the action
+            $this->logger->log('purchase_orders', 'mark_received', $po_id, null, [
+                'received_at' => $received_date,
+                'items_count' => $total_items_received,
+                'total_qty' => $total_qty_received
+            ], 'PO marked as received - stock updated');
             
-            return ['success' => true];
+            // Commit transaction
+            $this->db->commit();
+            
+            return [
+                'success' => true,
+                'items_received' => $total_items_received,
+                'total_qty' => $total_qty_received
+            ];
+            
         } catch (\Exception $e) {
+            // Rollback on error
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            
             return [
                 'success' => false,
                 'error' => $e->getMessage()
@@ -561,6 +670,211 @@ class PurchaseOrderModel
         );
         $stmt->execute([$query, $query, $query]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Queue sold products into supplier-grouped auto purchase orders.
+     * Products are appended to the same open auto PO (draft/pending_approval)
+     * until that PO is approved.
+     */
+    public function queueAutoReplenishmentFromSale(array $soldItems, int $createdBy): array
+    {
+        if (empty($soldItems)) {
+            return ['queued_items' => 0, 'po_count' => 0, 'skipped_items' => 0];
+        }
+
+        $normalized = [];
+        foreach ($soldItems as $row) {
+            $productId = (int)($row['product_id'] ?? 0);
+            $qty = (int)($row['qty'] ?? 0);
+            $unitCost = (float)($row['unit_cost'] ?? 0);
+            if ($productId <= 0 || $qty <= 0) {
+                continue;
+            }
+
+            if (!isset($normalized[$productId])) {
+                $normalized[$productId] = [
+                    'product_id' => $productId,
+                    'qty' => 0,
+                    'unit_cost' => $unitCost,
+                ];
+            }
+
+            $normalized[$productId]['qty'] += $qty;
+            if ($unitCost > 0) {
+                $normalized[$productId]['unit_cost'] = $unitCost;
+            }
+        }
+
+        if (empty($normalized)) {
+            return ['queued_items' => 0, 'po_count' => 0, 'skipped_items' => 0];
+        }
+
+        $productIds = array_keys($normalized);
+        $placeholders = implode(',', array_fill(0, count($productIds), '?'));
+
+        $productStmt = $this->db->prepare(
+            "SELECT p.product_id,
+                    p.product_name,
+                    p.primary_supplier_id,
+                    p.cost_price,
+                    COALESCE(
+                        p.primary_supplier_id,
+                        (
+                            SELECT sp.supplier_id
+                            FROM supplier_products sp
+                            WHERE sp.product_id = p.product_id
+                            ORDER BY sp.is_primary DESC, sp.sp_id ASC
+                            LIMIT 1
+                        ),
+                        (
+                            SELECT s.supplier_id
+                            FROM suppliers s
+                            WHERE s.status = 'active'
+                            ORDER BY s.supplier_id ASC
+                            LIMIT 1
+                        )
+                    ) AS resolved_supplier_id
+             FROM products p
+             WHERE p.product_id IN ($placeholders)"
+        );
+        $productStmt->execute($productIds);
+        $products = [];
+        foreach ($productStmt->fetchAll(PDO::FETCH_ASSOC) as $product) {
+            $products[(int)$product['product_id']] = $product;
+        }
+
+        $setPrimarySupplierStmt = $this->db->prepare(
+            "UPDATE products SET primary_supplier_id = ? WHERE product_id = ? AND primary_supplier_id IS NULL"
+        );
+
+        $bySupplier = [];
+        $skippedItems = 0;
+        foreach ($normalized as $row) {
+            $productId = (int)$row['product_id'];
+            if (!isset($products[$productId])) {
+                $skippedItems++;
+                continue;
+            }
+
+            $product = $products[$productId];
+            $supplierId = isset($product['resolved_supplier_id']) ? (int)$product['resolved_supplier_id'] : 0;
+            if ($supplierId <= 0) {
+                $skippedItems++;
+                continue;
+            }
+
+            if (empty($product['primary_supplier_id'])) {
+                $setPrimarySupplierStmt->execute([$supplierId, $productId]);
+            }
+
+            $cost = (float)$row['unit_cost'];
+            if ($cost <= 0) {
+                $cost = (float)($product['cost_price'] ?? 0);
+            }
+            if ($cost <= 0) {
+                $cost = 1.00;
+            }
+
+            if (!isset($bySupplier[$supplierId])) {
+                $bySupplier[$supplierId] = [];
+            }
+
+            $bySupplier[$supplierId][] = [
+                'product_id' => $productId,
+                'qty' => (int)$row['qty'],
+                'unit_cost' => $cost,
+            ];
+        }
+
+        if (empty($bySupplier)) {
+            return ['queued_items' => 0, 'po_count' => 0, 'skipped_items' => $skippedItems];
+        }
+
+        $findAutoPoStmt = $this->db->prepare(
+            "SELECT po_id
+             FROM purchase_orders
+             WHERE branch_id = ?
+               AND supplier_id = ?
+               AND status IN ('draft', 'pending_approval')
+               AND notes LIKE ?
+             ORDER BY po_id DESC
+             LIMIT 1"
+        );
+        $createPoStmt = $this->db->prepare(
+            "INSERT INTO purchase_orders (
+                po_number, branch_id, supplier_id, created_by, status, expected_delivery, notes, created_at
+             ) VALUES (?, ?, ?, ?, 'pending_approval', ?, ?, NOW())"
+        );
+        $upsertPoItemSelectStmt = $this->db->prepare(
+            "SELECT item_id FROM po_items WHERE po_id = ? AND product_id = ? LIMIT 1"
+        );
+        $updatePoItemStmt = $this->db->prepare(
+            "UPDATE po_items SET qty_ordered = qty_ordered + ?, unit_cost = ? WHERE item_id = ?"
+        );
+        $insertPoItemStmt = $this->db->prepare(
+            "INSERT INTO po_items (po_id, product_id, qty_ordered, unit_cost) VALUES (?, ?, ?, ?)"
+        );
+        $updatePoTotalStmt = $this->db->prepare(
+            "UPDATE purchase_orders po
+             SET total_amount = (
+                SELECT COALESCE(SUM(qty_ordered * unit_cost), 0)
+                FROM po_items
+                WHERE po_id = po.po_id
+             )
+             WHERE po.po_id = ?"
+        );
+        $supplierLeadStmt = $this->db->prepare(
+            "SELECT lead_time_days FROM suppliers WHERE supplier_id = ? LIMIT 1"
+        );
+
+        $autoMarker = '[AUTO-REPLENISHMENT]';
+        $poTouched = [];
+        $queuedItems = 0;
+
+        foreach ($bySupplier as $supplierId => $rows) {
+            $findAutoPoStmt->execute([BRANCH_ID, (int)$supplierId, '%' . $autoMarker . '%']);
+            $poId = (int)($findAutoPoStmt->fetchColumn() ?: 0);
+
+            if ($poId <= 0) {
+                $supplierLeadStmt->execute([(int)$supplierId]);
+                $leadDays = (int)($supplierLeadStmt->fetchColumn() ?: 7);
+                $expectedDelivery = date('Y-m-d', strtotime('+' . max(1, $leadDays) . ' days'));
+
+                $poNumber = $this->generatePONumber();
+                $createPoStmt->execute([
+                    $poNumber,
+                    BRANCH_ID,
+                    (int)$supplierId,
+                    max(1, $createdBy),
+                    $expectedDelivery,
+                    $autoMarker . ' Auto-generated from POS sales. Pending approval.',
+                ]);
+                $poId = (int)$this->db->lastInsertId();
+            }
+
+            foreach ($rows as $row) {
+                $upsertPoItemSelectStmt->execute([$poId, (int)$row['product_id']]);
+                $existingItemId = (int)($upsertPoItemSelectStmt->fetchColumn() ?: 0);
+
+                if ($existingItemId > 0) {
+                    $updatePoItemStmt->execute([(int)$row['qty'], (float)$row['unit_cost'], $existingItemId]);
+                } else {
+                    $insertPoItemStmt->execute([$poId, (int)$row['product_id'], (int)$row['qty'], (float)$row['unit_cost']]);
+                }
+
+                $queuedItems += (int)$row['qty'];
+            }
+
+            $updatePoTotalStmt->execute([$poId]);
+            $poTouched[$poId] = true;
+        }
+
+        return [
+            'queued_items' => $queuedItems,
+            'po_count' => count($poTouched),
+            'skipped_items' => $skippedItems,
+        ];
     }
     
     /**

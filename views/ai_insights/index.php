@@ -106,3 +106,112 @@
         </div>
     </div>
 </div>
+
+<!-- Recent Recommendations -->
+<div class="card card-soft mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">🤖 Recent AI Recommendations</h6>
+        <span class="badge bg-primary"><?= count($items) ?> Active</span>
+    </div>
+    <div class="card-body">
+        <?php if (empty($items)): ?>
+            <div class="text-center py-5">
+                <div class="text-muted mb-3">
+                    <svg width="80" height="80" fill="currentColor" class="opacity-25">
+                        <circle cx="40" cy="40" r="35" stroke="currentColor" stroke-width="2" fill="none"/>
+                        <path d="M 25 40 L 35 50 L 55 30" stroke="currentColor" stroke-width="3" fill="none"/>
+                    </svg>
+                </div>
+                <p class="text-muted">No pending recommendations at the moment.</p>
+                <p class="text-muted small">AI analyzes your business activities in real-time. Recommendations will appear as actions occur.</p>
+                <form method="POST" action="<?= e(BASE_URL) ?>/ai-insights/generate" class="mt-3">
+                    <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
+                    <button type="submit" class="btn btn-primary btn-sm">Generate Stock Recommendations</button>
+                </form>
+            </div>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Recommendation</th>
+                            <th>Product</th>
+                            <th>Urgency</th>
+                            <th>Confidence</th>
+                            <th>Generated</th>
+                            <th width="100">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($items as $rec): ?>
+                            <tr>
+                                <td>
+                                    <?php
+                                    $typeIcons = [
+                                        'restock' => '📦',
+                                        'pricing' => '💰',
+                                        'dead_stock' => '⚠️',
+                                        'supplier' => '🚚',
+                                        'substitution' => '🛍️',
+                                        'promotion' => '🎉',
+                                        'anomaly' => '🔴',
+                                        'bulk_order' => '📊'
+                                    ];
+                                    $icon = $typeIcons[$rec['rec_type']] ?? '💡';
+                                    $typeLabel = ucfirst(str_replace('_', ' ', $rec['rec_type']));
+                                    ?>
+                                    <span title="<?= e($typeLabel) ?>"><?= $icon ?></span>
+                                    <small class="text-muted d-block"><?= e($typeLabel) ?></small>
+                                </td>
+                                <td>
+                                    <div class="fw-600" style="max-width: 400px;">
+                                        <?= e(substr($rec['recommendation'], 0, 120)) ?>
+                                        <?= strlen($rec['recommendation']) > 120 ? '...' : '' ?>
+                                    </div>
+                                </td>
+                                <td>
+                                    <?php if (!empty($rec['product_name'])): ?>
+                                        <small class="text-muted"><?= e($rec['product_name']) ?></small>
+                                    <?php else: ?>
+                                        <small class="text-muted">-</small>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php
+                                    $urgencyBadges = [
+                                        'critical' => 'bg-danger',
+                                        'urgent' => 'bg-warning',
+                                        'normal' => 'bg-info',
+                                        'monitor' => 'bg-secondary'
+                                    ];
+                                    $badgeClass = $urgencyBadges[$rec['urgency']] ?? 'bg-secondary';
+                                    ?>
+                                    <span class="badge <?= $badgeClass ?>"><?= e(ucfirst($rec['urgency'])) ?></span>
+                                </td>
+                                <td>
+                                    <small class="text-muted"><?= number_format($rec['confidence_score'], 0) ?>%</small>
+                                </td>
+                                <td>
+                                    <small class="text-muted"><?= e(date('M d, H:i', strtotime($rec['generated_at']))) ?></small>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <form method="POST" action="<?= e(BASE_URL) ?>/ai-insights/<?= intval($rec['rec_id']) ?>/accept" class="d-inline">
+                                            <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
+                                            <button type="submit" class="btn btn-success btn-sm" title="Accept">✓</button>
+                                        </form>
+                                        <form method="POST" action="<?= e(BASE_URL) ?>/ai-insights/<?= intval($rec['rec_id']) ?>/dismiss" class="d-inline">
+                                            <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
+                                            <button type="submit" class="btn btn-outline-secondary btn-sm" title="Dismiss">✕</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>

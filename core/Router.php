@@ -293,6 +293,7 @@ class Router
         self::get('/inventory/aging', 'InventoryController', 'aging');
         self::get('/inventory/stocktake', 'InventoryController', 'stocktake');
         self::post('/inventory/stocktake/create', 'InventoryController', 'createStocktake');
+        self::get('/inventory/stocktake/:id/count', 'InventoryController', 'countingPage');
         self::post('/inventory/stocktake/:id/record', 'InventoryController', 'recordCount');
         self::post('/inventory/stocktake/:id/finalize', 'InventoryController', 'finalizeStocktake');
         self::get('/inventory/shelves', 'InventoryController', 'shelves');
@@ -372,6 +373,7 @@ class Router
         // ═══════════════════════════════════════════════════════════════════
         self::get('/reports', 'ReportController', 'index');
         self::get('/reports/sales', 'ReportController', 'sales');
+        self::get('/reports/customer-transactions', 'ReportController', 'customerTransactions');
         self::get('/reports/profit', 'ReportController', 'profit');
         self::get('/reports/inventory', 'ReportController', 'inventory');
         self::get('/reports/shrinkage', 'ReportController', 'shrinkage');

@@ -155,7 +155,7 @@
                                                 </div>
                                                 <div class="modal-footer">
                                                     <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                    <form method="POST" action="<?= e(BASE_URL) ?>/inventory/<?= e((string)$adj['adjustment_id']) ?>/approve" style="display:inline;">
+                                                    <form method="POST" action="<?= e(BASE_URL) ?>/inventory/adjustments/<?= e((string)$adj['adjustment_id']) ?>/approve" style="display:inline;">
                                                         <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
                                                         <button type="submit" class="btn btn-sm btn-success">Approve</button>
                                                     </form>
@@ -177,7 +177,7 @@
                                                 </div>
                                                 <div class="modal-footer">
                                                     <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                    <form method="POST" action="<?= e(BASE_URL) ?>/inventory/<?= e((string)$adj['adjustment_id']) ?>/reject" style="display:inline;">
+                                                    <form method="POST" action="<?= e(BASE_URL) ?>/inventory/adjustments/<?= e((string)$adj['adjustment_id']) ?>/reject" style="display:inline;">
                                                         <input type="hidden" name="_token" value="<?= e($csrf ?? csrfToken()) ?>">
                                                         <button type="submit" class="btn btn-sm btn-danger">Reject</button>
                                                     </form>

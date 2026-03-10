@@ -80,6 +80,24 @@
             </div>
         </div>
     </div>
+
+    <?php $currentRole = (string)($user['role_slug'] ?? ''); ?>
+    <?php if (in_array($currentRole, ['owner', 'manager'], true)): ?>
+    <div class="col-lg-4 col-md-6">
+        <div class="card card-soft card-hover">
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <div class="icon-box bg-info-soft" style="font-size: 2rem;">🧾</div>
+                    <div>
+                        <h6 class="mb-1">Customer Transactions</h6>
+                        <small class="text-muted">Per-customer receipt history</small>
+                    </div>
+                </div>
+                <a href="<?= e(BASE_URL) ?>/reports/customer-transactions" class="btn btn-sm btn-outline-info w-100">View Report</a>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
     
     <div class="col-lg-4 col-md-6">
         <div class="card card-soft card-hover">

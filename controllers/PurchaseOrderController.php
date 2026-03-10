@@ -163,11 +163,12 @@ class PurchaseOrderController extends ModuleController
     }
     
     /**
-     * Add item to PO (AJAX)
+     * Add item to PO
      */
     public function addItem(): void
     {
         $this->requireAuth(['owner', 'manager']);
+        Auth::csrfVerify();
         
         $po_id = (int)$this->post('po_id', 0);
         $product_id = (int)$this->post('product_id', 0);
@@ -175,12 +176,17 @@ class PurchaseOrderController extends ModuleController
         $unit_price = (float)$this->post('unit_price', 0);
         
         if ($po_id <= 0 || $product_id <= 0 || $quantity <= 0 || $unit_price <= 0) {
-            $this->json(['success' => false, 'message' => 'Invalid parameters']);
+            $this->done('Invalid parameters. Please check product, quantity, and unit price.', '/purchase-orders/' . $po_id . '/edit');
             return;
         }
         
         $result = $this->poModel->addItem($po_id, $product_id, $quantity, $unit_price);
-        $this->json($result);
+        
+        if ($result['success']) {
+            $this->done('Item added successfully.', '/purchase-orders/' . $po_id . '/edit', 'success');
+        } else {
+            $this->done($result['message'] ?? 'Failed to add item.', '/purchase-orders/' . $po_id . '/edit', 'error');
+        }
     }
     
     /**
@@ -224,7 +230,7 @@ class PurchaseOrderController extends ModuleController
      */
     public function approve(string $id): void
     {
-        $this->requireAuth(['owner', 'manager']);
+        $this->requireAuth(['owner', 'manager', 'inventory_staff']);
         Auth::csrfVerify();
         
         $po_id = (int)$id;
@@ -242,7 +248,7 @@ class PurchaseOrderController extends ModuleController
      */
     public function reject(string $id): void
     {
-        $this->requireAuth(['owner', 'manager']);
+        $this->requireAuth(['owner', 'manager', 'inventory_staff']);
         Auth::csrfVerify();
         
         $po_id = (int)$id;
@@ -287,9 +293,13 @@ class PurchaseOrderController extends ModuleController
         $result = $this->poModel->markReceived($po_id, $received_date);
         
         if ($result['success']) {
-            $this->done('PO marked as received.', '/purchase-orders/' . $po_id);
+            $items_count = $result['items_received'] ?? 0;
+            $total_qty = $result['total_qty'] ?? 0;
+            $message = "PO marked as received. {$items_count} items ({$total_qty} units) added to stock.";
+            $this->done($message, '/purchase-orders/' . $po_id);
         } else {
-            $this->done('Failed to mark PO as received.', '/purchase-orders/' . $po_id);
+            $error = $result['error'] ?? 'Unknown error';
+            $this->done("Failed to mark PO as received: {$error}", '/purchase-orders/' . $po_id);
         }
     }
     
