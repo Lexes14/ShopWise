@@ -132,6 +132,18 @@
     padding: 10px;
 }
 
+.product-promo-badge {
+    display: inline-block;
+    margin-bottom: 6px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #0f766e;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
 .cart-layout {
     min-height: 0;
 }

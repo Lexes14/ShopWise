@@ -1,7 +1,7 @@
 # 📚 ShopWise AI — Complete System Guide
 
-**Version:** 5.0  
-**Last Updated:** March 8, 2026  
+**Version:** 5.1  
+**Last Updated:** March 11, 2026  
 **Environment:** Development (XAMPP)
 
 ---
@@ -32,6 +32,7 @@
 ✅ **Multi-User Support** — 7 dashboard roles with granular permissions  
 ✅ **Loyalty Program** — Manage customer points and tier benefits  
 ✅ **Audit Trail** — Complete logging of all user actions for compliance  
+✅ **Operations Tools** — Notifications center, backup/restore, and settings controls  
 
 ---
 
@@ -153,6 +154,13 @@ The system has **7 predefined roles**, each with specific permissions:
 6. Transaction saved, receipt printed
 7. Shift closes with cash reconciliation
 
+**Additional POS Functions (v5.1):**
+- Hold and recall carts (`/pos/hold`, `/pos/held`)
+- Void transaction flow (`/pos/void/{id}`)
+- Receipt reprint (`/pos/receipt/{id}`)
+- Promotion-aware checkout logic
+- Batch consumption on sale (FEFO-style stock deduction)
+
 **Data Flow:**
 - **Input:** Product codes, quantities, customer info
 - **Processing:** Tax calculation, discount logic, loyalty points
@@ -166,8 +174,10 @@ The system has **7 predefined roles**, each with specific permissions:
 - **Products:** Browse, create, edit, set pricing & stock levels
 - **Stock Adjustment:** Manual quantity corrections (receiving, loss, adjustment)
 - **Stocktake:** Physical count validation against system
+- **Stocktake Counting Page:** Per-session counting and finalize flow
 - **Aging Report:** Products not sold in N days (dead stock)
 - **Expiring Items:** Products near expiry date (FEFO — First Expired, First Out)
+- **Shelves View:** Shelf/product placement monitoring (`/inventory/shelves`)
 
 **Data Storage:**
 - `products` → Master product data
@@ -218,6 +228,10 @@ The system has **7 predefined roles**, each with specific permissions:
 - Calculation: PHP algorithms (no external API)
 - Frequency:** Runs on dashboard load, cached for 6 hours
 
+**Additional AI Screens & Actions (v5.1):**
+- Demand, pricing, stock, bundling, anomalies, and segment insight pages
+- Workflow actions: generate, accept, dismiss, and feedback on recommendations
+
 ---
 
 ### 6. Loyalty Program
@@ -245,6 +259,30 @@ The system has **7 predefined roles**, each with specific permissions:
 | Inventory Value | Owner | `products` (qty × cost) |
 | Audit Log | Security, Owner | `audit_logs` |
 | Tax Summary | Bookkeeper, Owner | `pos_transactions` (VAT calculation) |
+
+**Additional Reports & Exports (v5.1):**
+- Customer Transaction History (`/reports/customer-transactions`)
+- CSV exports: sales, profit, inventory
+- Excel export: sales
+
+---
+
+### 8. Notifications, Backup, and Settings
+
+**Notifications (`/notifications`):**
+- Role-targeted and user-targeted notifications
+- Mark one as read, mark all as read, delete (owner/manager)
+
+**Backup (`/backup`):**
+- Create SQL backup
+- Download generated backup files
+- Restore from uploaded SQL backup
+
+**Settings (`/settings`):**
+- Store profile updates
+- Tax configuration updates
+- POS behavior configuration
+- AI parameter configuration
 
 ---
 
@@ -567,6 +605,24 @@ define('LOYALTY_PESO_PER_POINT', 0.50);   // 1 point = ₱0.50
 
 ---
 
+### Stocktake Counting Not Saving
+
+**Problem:** Counts are not persisted in stocktake session
+- **Check:** Session created from `/inventory/stocktake`
+- **Check:** Counting submitted to `/inventory/stocktake/{id}/record`
+- **Fix:** Re-open counting page and submit at least one counted item before finalizing
+
+---
+
+### Backup Restore Fails
+
+**Problem:** Restore action returns validation or import error
+- **Check:** File is valid SQL dump and not corrupted
+- **Check:** DB user has import privileges
+- **Fix:** Recreate backup and retry restore via `/backup`
+
+---
+
 ## 📞 Support
 
 **For Issues:**
@@ -582,6 +638,6 @@ define('LOYALTY_PESO_PER_POINT', 0.50);   // 1 point = ₱0.50
 ---
 
 **Created:** March 8, 2026  
-**System:** ShopWise AI v5.0  
+**System:** ShopWise AI v5.1  
 **Environment:** Development (XAMPP localhost)
 

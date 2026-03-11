@@ -83,8 +83,25 @@
                             data-product-price="<?= e((string)$product['selling_price']) ?>"
                             data-product-stock="<?= e((string)$product['current_stock']) ?>"
                             data-product-category="<?= e((string)($product['category_id'] ?? '0')) ?>"
+                            data-promo-id="<?= e((string)($product['active_promo_id'] ?? 0)) ?>"
+                            data-promo-name="<?= e((string)($product['active_promo_name'] ?? '')) ?>"
+                            data-promo-pct="<?= e((string)($product['active_promo_discount_pct'] ?? 0)) ?>"
+                            data-promo-amount="<?= e((string)($product['active_promo_discount_amount'] ?? 0)) ?>"
                             data-product-emoji="📦"
                         >
+                            <?php
+                            $promoPct = (float)($product['active_promo_discount_pct'] ?? 0);
+                            $promoAmt = (float)($product['active_promo_discount_amount'] ?? 0);
+                            $hasPromo = ((int)($product['active_promo_id'] ?? 0) > 0) && ($promoPct > 0 || $promoAmt > 0);
+                            $promoLabel = $promoPct > 0
+                                ? rtrim(rtrim(number_format($promoPct, 2), '0'), '.') . '% OFF'
+                                : ('₱' . number_format($promoAmt, 2) . ' OFF');
+                            ?>
+                            <?php if ($hasPromo): ?>
+                                <div class="product-promo-badge" title="<?= e((string)($product['active_promo_name'] ?? 'Active Promotion')) ?>">
+                                    PROMO <?= e($promoLabel) ?>
+                                </div>
+                            <?php endif; ?>
                             <div class="product-name"><?= e((string)$product['product_name']) ?></div>
                             <div class="product-price">₱<?= e(number_format((float)$product['selling_price'], 2)) ?></div>
                             <div class="product-stock">Stock: <?= e((string)$product['current_stock']) ?></div>

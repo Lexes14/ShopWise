@@ -23,15 +23,54 @@ class ReportController extends ModuleController
     {
         $this->requireAuth();
         $db = Database::getInstance();
-        $stmt = $db->query(
-            "SELECT DATE(created_at) AS report_date, COUNT(*) AS transactions, SUM(total_amount) AS gross_sales,
-                    SUM(discount_amount) AS discounts, SUM(vat_amount) AS vat_collected
+        
+        // Get date range from request
+        $startDate = trim((string)$this->get('start_date', date('Y-m-d', strtotime('-30 days'))));
+        $endDate = trim((string)$this->get('end_date', date('Y-m-d')));
+        
+        // Validate date format
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) {
+            $startDate = date('Y-m-d', strtotime('-30 days'));
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate)) {
+            $endDate = date('Y-m-d');
+        }
+        
+        $stmt = $db->prepare(
+            "SELECT DATE(created_at) AS report_date, 
+                    COUNT(*) AS transactions, 
+                    SUM(total_amount) AS gross_sales,
+                    SUM(discount_amount) AS discounts, 
+                    SUM(vat_amount) AS vat_collected,
+                    SUM(total_amount - discount_amount) AS net_sales
              FROM transactions
-             WHERE status = 'completed' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+             WHERE status = 'completed' 
+               AND DATE(created_at) BETWEEN ? AND ?
              GROUP BY DATE(created_at)
              ORDER BY report_date DESC"
         );
-        $this->moduleIndex($stmt->fetchAll(), ['section' => 'sales']);
+        $stmt->execute([$startDate, $endDate]);
+        $records = $stmt->fetchAll();
+        
+        // Calculate summary totals
+        $summary = [
+            'total_transactions' => array_sum(array_column($records, 'transactions')),
+            'total_gross_sales' => array_sum(array_column($records, 'gross_sales')),
+            'total_discounts' => array_sum(array_column($records, 'discounts')),
+            'total_vat' => array_sum(array_column($records, 'vat_collected')),
+            'total_net_sales' => array_sum(array_column($records, 'net_sales')),
+        ];
+        
+        $this->moduleSection('sales', [
+            'records' => $records,
+            'extra' => [
+                'filters' => [
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                ],
+                'summary' => $summary,
+            ]
+        ]);
     }
 
     public function customerTransactions(): void
@@ -105,18 +144,59 @@ class ReportController extends ModuleController
     {
         $this->requireAuth(['owner', 'manager', 'bookkeeper']);
         $db = Database::getInstance();
-        $stmt = $db->query(
+        
+        // Get date range from request
+        $startDate = trim((string)$this->get('start_date', date('Y-m-d', strtotime('-30 days'))));
+        $endDate = trim((string)$this->get('end_date', date('Y-m-d')));
+        
+        // Validate date format
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) {
+            $startDate = date('Y-m-d', strtotime('-30 days'));
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate)) {
+            $endDate = date('Y-m-d');
+        }
+        
+        $stmt = $db->prepare(
             "SELECT DATE(t.created_at) AS report_date,
+                    COUNT(DISTINCT t.transaction_id) AS transactions,
                     SUM(ti.subtotal) AS revenue,
                     SUM(ti.cost_price * ti.quantity) AS cogs,
-                    SUM(ti.subtotal - (ti.cost_price * ti.quantity)) AS gross_profit
+                    SUM(ti.subtotal - (ti.cost_price * ti.quantity)) AS gross_profit,
+                    ROUND((SUM(ti.subtotal - (ti.cost_price * ti.quantity)) / NULLIF(SUM(ti.subtotal), 0)) * 100, 2) AS margin_percent
              FROM transaction_items ti
              JOIN transactions t ON t.transaction_id = ti.transaction_id
-             WHERE t.status = 'completed' AND t.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+             WHERE t.status = 'completed' 
+               AND DATE(t.created_at) BETWEEN ? AND ?
              GROUP BY DATE(t.created_at)
              ORDER BY report_date DESC"
         );
-        $this->moduleIndex($stmt->fetchAll(), ['section' => 'profit']);
+        $stmt->execute([$startDate, $endDate]);
+        $records = $stmt->fetchAll();
+        
+        // Calculate summary totals
+        $totalRevenue = array_sum(array_column($records, 'revenue'));
+        $totalCogs = array_sum(array_column($records, 'cogs'));
+        $totalGrossProfit = array_sum(array_column($records, 'gross_profit'));
+        
+        $summary = [
+            'total_transactions' => array_sum(array_column($records, 'transactions')),
+            'total_revenue' => $totalRevenue,
+            'total_cogs' => $totalCogs,
+            'total_gross_profit' => $totalGrossProfit,
+            'avg_margin_percent' => $totalRevenue > 0 ? round(($totalGrossProfit / $totalRevenue) * 100, 2) : 0,
+        ];
+        
+        $this->moduleSection('profit', [
+            'records' => $records,
+            'extra' => [
+                'filters' => [
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                ],
+                'summary' => $summary,
+            ]
+        ]);
     }
 
     public function inventory(): void

@@ -237,6 +237,10 @@ class AIController extends ModuleController
         $this->requireAuth();
         
         $recommendations = $this->aiModel->getByType('pricing', 100);
+        if (empty($recommendations)) {
+            $this->aiModel->generatePricingRecommendations(30);
+            $recommendations = $this->aiModel->getByType('pricing', 100);
+        }
         
         $this->moduleSection('pricing', [
             'records' => $recommendations,
@@ -356,17 +360,211 @@ class AIController extends ModuleController
         Auth::csrfVerify();
 
         $db = Database::getInstance();
-        $stmt = $db->prepare(
-            "UPDATE ai_recommendations
-             SET status = 'accepted', acted_on_by = ?, acted_on_at = NOW()
-             WHERE rec_id = ? AND status = 'pending'"
-        );
-        $stmt->execute([(int)$this->user()['user_id'], (int)$id]);
+        $userId = (int)$this->user()['user_id'];
+        $recId = (int)$id;
 
-        $logger = new Logger();
-        $logger->log('ai_insights', 'accept', (int)$id, ['status' => 'pending'], ['status' => 'accepted'], 'AI recommendation accepted.');
+        try {
+            $db->beginTransaction();
 
-        $this->done('AI recommendation #' . (int)$id . ' accepted.', '/ai-insights');
+            $recStmt = $db->prepare(
+                "SELECT *
+                 FROM ai_recommendations
+                 WHERE rec_id = ? AND status = 'pending'
+                 LIMIT 1"
+            );
+            $recStmt->execute([$recId]);
+            $recommendation = $recStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$recommendation) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                $this->done('Recommendation not found or already processed.', '/ai-insights', 'warning');
+                return;
+            }
+
+            $actionResult = $this->executeRecommendationAction($db, $recommendation, $userId);
+
+            $stmt = $db->prepare(
+                "UPDATE ai_recommendations
+                 SET status = 'accepted', acted_on_by = ?, acted_on_at = NOW()
+                 WHERE rec_id = ? AND status = 'pending'"
+            );
+            $stmt->execute([$userId, $recId]);
+
+            $logger = new Logger();
+            $logger->log(
+                'ai_insights',
+                'accept',
+                $recId,
+                ['status' => 'pending'],
+                [
+                    'status' => 'accepted',
+                    'rec_type' => $recommendation['rec_type'] ?? null,
+                    'auto_action' => $actionResult,
+                ],
+                'AI recommendation accepted with automatic action execution.'
+            );
+
+            $db->commit();
+
+            $message = 'AI recommendation #' . $recId . ' accepted.';
+            if (!empty($actionResult['message'])) {
+                $message .= ' ' . $actionResult['message'];
+            }
+            $this->done($message, '/ai-insights');
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $this->done('Failed to accept recommendation: ' . $e->getMessage(), '/ai-insights');
+        }
+    }
+
+    private function executeRecommendationAction(PDO $db, array $recommendation, int $userId): array
+    {
+        $recType = (string)($recommendation['rec_type'] ?? '');
+        $productId = (int)($recommendation['product_id'] ?? 0);
+
+        if ($recType === 'restock') {
+            if ($productId <= 0) {
+                return ['action' => 'skipped', 'message' => 'No product linked for auto-PO.'];
+            }
+
+            $qty = max(1, (int)round((float)($recommendation['suggested_value'] ?? 0)));
+            $prodStmt = $db->prepare(
+                "SELECT product_id,
+                        COALESCE(NULLIF(avg_cost_price, 0), cost_price, 0) AS unit_cost
+                 FROM products
+                 WHERE product_id = ?
+                 LIMIT 1"
+            );
+            $prodStmt->execute([$productId]);
+            $product = $prodStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$product) {
+                return ['action' => 'skipped', 'message' => 'Product not found for auto-PO.'];
+            }
+
+            $unitCost = (float)($product['unit_cost'] ?? 0);
+            if ($unitCost <= 0) {
+                $unitCost = 1.00;
+            }
+
+            $poModel = new PurchaseOrderModel();
+            $result = $poModel->queueAutoReplenishmentFromSale([
+                [
+                    'product_id' => $productId,
+                    'qty' => $qty,
+                    'unit_cost' => $unitCost,
+                ],
+            ], $userId);
+
+            if ((int)($result['queued_items'] ?? 0) > 0) {
+                return [
+                    'action' => 'purchase_order',
+                    'message' => 'Auto PO queued for approval.',
+                    'meta' => $result,
+                ];
+            }
+
+            return ['action' => 'skipped', 'message' => 'No PO changes were needed.'];
+        }
+
+        if (in_array($recType, ['dead_stock', 'promotion', 'substitution'], true)) {
+            if ($productId <= 0) {
+                return ['action' => 'skipped', 'message' => 'No product linked for promo creation.'];
+            }
+
+            $promoPct = match ($recType) {
+                'dead_stock' => 15.0,
+                'substitution' => 8.0,
+                default => 10.0,
+            };
+
+            $dupStmt = $db->prepare(
+                "SELECT p.promo_id
+                 FROM promotions p
+                 JOIN promotion_products pp ON pp.promo_id = p.promo_id
+                 WHERE p.ai_generated = 1
+                   AND p.status = 'active'
+                   AND p.promo_type = 'price_discount'
+                   AND pp.product_id = ?
+                   AND NOW() BETWEEN p.start_datetime AND p.end_datetime
+                 ORDER BY p.promo_id DESC
+                 LIMIT 1"
+            );
+            $dupStmt->execute([$productId]);
+            $existingPromoId = (int)($dupStmt->fetchColumn() ?: 0);
+            if ($existingPromoId > 0) {
+                return [
+                    'action' => 'skipped',
+                    'message' => 'Active AI promo already exists for this item.',
+                    'meta' => ['promo_id' => $existingPromoId],
+                ];
+            }
+
+            $nameStmt = $db->prepare("SELECT product_name FROM products WHERE product_id = ? LIMIT 1");
+            $nameStmt->execute([$productId]);
+            $productName = (string)($nameStmt->fetchColumn() ?: ('Product #' . $productId));
+
+            $promoStmt = $db->prepare(
+                "INSERT INTO promotions (
+                    promo_name, promo_type, description, discount_pct, discount_amount,
+                    min_qty, free_qty, threshold_amount, threshold_discount,
+                    start_datetime, end_datetime, applicable_to, created_by, status,
+                    ai_generated, created_at
+                ) VALUES (?, 'price_discount', ?, ?, NULL, NULL, NULL, NULL, NULL, DATE_SUB(NOW(), INTERVAL 1 MINUTE), DATE_ADD(NOW(), INTERVAL 14 DAY), 'product', ?, 'active', 1, NOW())"
+            );
+
+            $promoName = 'AI Auto Promo: ' . $productName;
+            $promoDescription = 'Auto-created from AI recommendation #' . (int)$recommendation['rec_id'] . ' (' . $recType . ').';
+            $promoStmt->execute([$promoName, $promoDescription, $promoPct, $userId]);
+            $promoId = (int)$db->lastInsertId();
+
+            $targetStmt = $db->prepare("INSERT IGNORE INTO promotion_products (promo_id, product_id) VALUES (?, ?)");
+            $targetStmt->execute([$promoId, $productId]);
+
+            $relatedProductId = (int)($recommendation['related_product_id'] ?? 0);
+            if ($recType === 'substitution' && $relatedProductId > 0) {
+                $targetStmt->execute([$promoId, $relatedProductId]);
+            }
+
+            return [
+                'action' => 'promotion',
+                'message' => 'Auto promotion created (' . rtrim(rtrim(number_format($promoPct, 2), '0'), '.') . '% off).',
+                'meta' => ['promo_id' => $promoId],
+            ];
+        }
+
+        if ($recType === 'pricing') {
+            if ($productId <= 0) {
+                return ['action' => 'skipped', 'message' => 'No product linked for auto price update.'];
+            }
+
+            $suggestedPrice = round((float)($recommendation['suggested_value'] ?? 0), 2);
+            if ($suggestedPrice <= 0) {
+                return ['action' => 'skipped', 'message' => 'Suggested price is missing.'];
+            }
+
+            $curStmt = $db->prepare("SELECT selling_price FROM products WHERE product_id = ? LIMIT 1");
+            $curStmt->execute([$productId]);
+            $currentPrice = (float)($curStmt->fetchColumn() ?: 0);
+            if ($currentPrice <= 0 || abs($currentPrice - $suggestedPrice) < 0.01) {
+                return ['action' => 'skipped', 'message' => 'No price change needed.'];
+            }
+
+            $upStmt = $db->prepare("UPDATE products SET selling_price = ?, updated_at = NOW() WHERE product_id = ?");
+            $upStmt->execute([$suggestedPrice, $productId]);
+
+            return [
+                'action' => 'price_update',
+                'message' => 'Product price updated automatically.',
+                'meta' => ['old_price' => $currentPrice, 'new_price' => $suggestedPrice],
+            ];
+        }
+
+        return ['action' => 'none', 'message' => 'No automatic action configured for this recommendation type.'];
     }
 
     public function dismiss(string $id): void

@@ -78,7 +78,9 @@
                 price: product.selling_price,
                 emoji: product.emoji || '📦',
                 stock_qty: product.stock_qty,
-                qty: 1
+                qty: 1,
+                promotion: product.promotion || null,
+                promo_applied: !!(product.promotion && Number(product.promotion.promo_id) > 0)
             });
         }
 
@@ -121,6 +123,15 @@
         });
     }
 
+    function togglePromo(productId) {
+        const item = state.cart.find((entry) => entry.product_id === productId);
+        if (!item || !item.promotion || !item.promotion.promo_id) {
+            return;
+        }
+        item.promo_applied = !item.promo_applied;
+        renderCart();
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // RENDERING
     // ═══════════════════════════════════════════════════════════════════════
@@ -139,7 +150,14 @@
             return;
         }
 
-        elements.cartItems.innerHTML = state.cart.map(item => `
+        elements.cartItems.innerHTML = state.cart.map(item => {
+            const hasPromo = !!(item.promotion && Number(item.promotion.promo_id) > 0);
+            const promoText = hasPromo
+                ? (Number(item.promotion.discount_pct) > 0
+                    ? `${Number(item.promotion.discount_pct)}% OFF`
+                    : `${window.ShopWise.formatPeso(Number(item.promotion.discount_amount || 0))} OFF`)
+                : '';
+            return `
             <div class="pos-cart-item" data-product-id="${item.product_id}">
                 <div class="pos-cart-item-header">
                     <div class="pos-cart-item-emoji">${item.emoji}</div>
@@ -161,8 +179,18 @@
                 <div class="pos-cart-item-price">
                     ${window.ShopWise.formatPeso(item.price * item.qty)}
                 </div>
+                ${hasPromo ? `
+                    <div class="mt-1 d-flex justify-content-between align-items-center">
+                        <small class="text-muted">${item.promotion.promo_name || 'Promo'} (${promoText})</small>
+                        <button class="btn btn-sm ${item.promo_applied ? 'btn-success' : 'btn-outline-success'}"
+                                onclick="window.POSTerminal.togglePromo(${item.product_id})">
+                            ${item.promo_applied ? 'Promo Applied' : 'Apply Promo'}
+                        </button>
+                    </div>
+                ` : ''}
             </div>
-        `).join('');
+        `;
+        }).join('');
 
         elements.cartItems.scrollTop = elements.cartItems.scrollHeight;
 
@@ -200,10 +228,26 @@
     function calculateTotals() {
         const subtotal = state.cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
         
-        // Apply discount for senior/PWD (20%)
-        const discountRate = (state.customerType === 'senior' || state.customerType === 'pwd') ? 0.20 : 0;
-        const discount = subtotal * discountRate;
-        
+        const promoDiscount = state.cart.reduce((sum, item) => {
+            if (!item.promo_applied || !item.promotion) return sum;
+            const lineSubtotal = item.price * item.qty;
+            let lineDiscount = 0;
+            const pct = Number(item.promotion.discount_pct || 0);
+            const amt = Number(item.promotion.discount_amount || 0);
+            if (pct > 0) {
+                lineDiscount = lineSubtotal * (pct / 100);
+            } else if (amt > 0) {
+                lineDiscount = amt * item.qty;
+            }
+            return sum + Math.min(lineSubtotal, lineDiscount);
+        }, 0);
+
+        // Apply discount for senior/PWD (20%) after item promotions
+        const baseAfterPromo = Math.max(0, subtotal - promoDiscount);
+        const customerDiscountRate = (state.customerType === 'senior' || state.customerType === 'pwd') ? 0.20 : 0;
+        const customerDiscount = baseAfterPromo * customerDiscountRate;
+        const discount = promoDiscount + customerDiscount;
+
         const vatableSales = subtotal - discount;
         
         // VAT-inclusive calculation: vatAmount = vatableSales - (vatableSales / 1.12)
@@ -211,7 +255,7 @@
         
         const grandTotal = vatableSales;
         
-        return { subtotal, discount, vat, grandTotal };
+        return { subtotal, discount, promoDiscount, customerDiscount, vat, grandTotal };
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -240,7 +284,15 @@
                             <span class="pos-total-value">${window.ShopWise.formatPeso(totals.subtotal)}</span>
                         </div>
                         <div class="pos-total-row">
-                            <span class="pos-total-label">Discount:</span>
+                            <span class="pos-total-label">Promo Discount:</span>
+                            <span class="pos-total-value">${window.ShopWise.formatPeso(totals.promoDiscount || 0)}</span>
+                        </div>
+                        <div class="pos-total-row">
+                            <span class="pos-total-label">Customer Discount:</span>
+                            <span class="pos-total-value">${window.ShopWise.formatPeso(totals.customerDiscount || 0)}</span>
+                        </div>
+                        <div class="pos-total-row">
+                            <span class="pos-total-label">Total Discount:</span>
                             <span class="pos-total-value">${window.ShopWise.formatPeso(totals.discount)}</span>
                         </div>
                         <div class="pos-total-row">
@@ -420,8 +472,9 @@
             customer_type: state.customerType,
             payment_method: state.paymentMethod,
             subtotal: totals.subtotal,
-            discount: totals.discount,
+            discount_amount: totals.discount,
             grand_total: totals.grandTotal,
+            promo_item_ids: state.cart.filter(item => item.promo_applied).map(item => item.product_id),
             _token: window.ShopWise.csrfToken || ''
         };
 
@@ -540,7 +593,7 @@
                             </div>
                             ${transaction.discount > 0 ? `
                                 <div class="pos-receipt-row">
-                                    <span>SC/PWD Discount (20%):</span>
+                                    <span>Total Discount:</span>
                                     <span>-${window.ShopWise.formatPeso(transaction.discount)}</span>
                                 </div>
                             ` : ''}
@@ -682,7 +735,11 @@
             price: Number(item.price || item.selling_price || 0),
             emoji: item.emoji || '📦',
             stock_qty: Number(item.stock_qty || item.stock || 9999),
-            qty: Number(item.qty || item.quantity || 1)
+            qty: Number(item.qty || item.quantity || 1),
+            promotion: item.promotion || null,
+            promo_applied: item.promo_applied === undefined
+                ? !!(item.promotion && Number(item.promotion.promo_id) > 0)
+                : !!item.promo_applied
         })).filter(item => item.product_id > 0 && item.qty > 0);
         state.customerType = txn.cart.customer_type || 'regular';
         renderCart();
@@ -705,7 +762,15 @@
                     name: card.dataset.productName,
                     selling_price: parseFloat(card.dataset.productPrice),
                     emoji: card.dataset.productEmoji,
-                    stock_qty: parseInt(card.dataset.productStock)
+                    stock_qty: parseInt(card.dataset.productStock),
+                    promotion: Number(card.dataset.promoId || 0) > 0
+                        ? {
+                            promo_id: Number(card.dataset.promoId || 0),
+                            promo_name: card.dataset.promoName || '',
+                            discount_pct: Number(card.dataset.promoPct || 0),
+                            discount_amount: Number(card.dataset.promoAmount || 0)
+                        }
+                        : null
                 };
                 
                 addToCart(product);
@@ -834,6 +899,7 @@
         addToCart,
         removeFromCart,
         updateQty,
+        togglePromo,
         clearCart,
         openCheckoutModal,
         setCustomerType,

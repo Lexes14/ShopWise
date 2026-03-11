@@ -70,7 +70,7 @@ class AIModel extends Model
             
             // Check profit margin
             $margin = $this->calculateMargin((float)$item['avg_cost_price'], (float)$item['selling_price']);
-            if ($margin < 15) {
+            if ($margin < 25) {
                 $this->generatePricingRecommendation($productId, $margin, $item);
             }
         }
@@ -737,6 +737,63 @@ class AIModel extends Model
             $urgency,
             $suggestedValue
         ]);
+    }
+
+    private function countPendingByType(string $type): int
+    {
+        $stmt = $this->db->prepare(
+            "SELECT COUNT(*) FROM ai_recommendations WHERE rec_type = ? AND status = 'pending'"
+        );
+        $stmt->execute([$type]);
+        return (int)$stmt->fetchColumn();
+    }
+
+    /**
+     * Batch-generate pricing recommendations from low-margin products.
+     */
+    public function generatePricingRecommendations(int $limit = 30): int
+    {
+        $limit = max(1, min(200, $limit));
+
+        $stmt = $this->db->prepare(
+            "SELECT p.product_id, p.product_name,
+                    COALESCE(NULLIF(p.avg_cost_price, 0), p.cost_price, 0) AS avg_cost_price,
+                    p.selling_price,
+                    COALESCE(SUM(CASE WHEN t.status = 'completed' THEN ti.quantity ELSE 0 END), 0) AS qty_sold_30d
+             FROM products p
+             LEFT JOIN transaction_items ti ON ti.product_id = p.product_id
+             LEFT JOIN transactions t ON t.transaction_id = ti.transaction_id
+                AND t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+             WHERE p.status = 'active'
+               AND p.selling_price > 0
+             GROUP BY p.product_id, p.product_name, p.avg_cost_price, p.cost_price, p.selling_price
+                 HAVING avg_cost_price > 0
+                     AND ((p.selling_price - avg_cost_price) / p.selling_price) * 100 < 25
+             ORDER BY qty_sold_30d DESC, p.product_name ASC
+             LIMIT {$limit}"
+        );
+        $stmt->execute();
+        $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $created = 0;
+        foreach ($products as $product) {
+            $price = (float)($product['selling_price'] ?? 0);
+            $cost = (float)($product['avg_cost_price'] ?? 0);
+            if ($price <= 0 || $cost <= 0) {
+                continue;
+            }
+
+            $margin = $this->calculateMargin($cost, $price);
+            $beforeCount = $this->countPendingByType('pricing');
+            $this->generatePricingRecommendation((int)$product['product_id'], $margin, $product);
+            $afterCount = $this->countPendingByType('pricing');
+
+            if ($afterCount > $beforeCount) {
+                $created += ($afterCount - $beforeCount);
+            }
+        }
+
+        return $created;
     }
     
     /**

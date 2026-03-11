@@ -111,10 +111,10 @@
 <div class="card card-soft mt-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h6 class="mb-0">🤖 Recent AI Recommendations</h6>
-        <span class="badge bg-primary"><?= count($items) ?> Active</span>
+        <span class="badge bg-primary"><?= count($records) ?> Active</span>
     </div>
     <div class="card-body">
-        <?php if (empty($items)): ?>
+        <?php if (empty($records)): ?>
             <div class="text-center py-5">
                 <div class="text-muted mb-3">
                     <svg width="80" height="80" fill="currentColor" class="opacity-25">
@@ -144,7 +144,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($items as $rec): ?>
+                        <?php foreach ($records as $rec): ?>
                             <tr>
                                 <td>
                                     <?php

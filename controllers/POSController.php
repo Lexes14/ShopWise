@@ -29,9 +29,31 @@ class POSController extends Controller
              ORDER BY category_name ASC"
         );
 
+        $products = $stmt->fetchAll();
+        foreach ($products as &$product) {
+            $promo = $this->getActivePromotionForProduct(
+                $db,
+                (int)$product['product_id'],
+                (int)($product['category_id'] ?? 0),
+                (float)$product['selling_price']
+            );
+            if ($promo) {
+                $product['active_promo_id'] = (int)$promo['promo_id'];
+                $product['active_promo_name'] = (string)$promo['promo_name'];
+                $product['active_promo_discount_pct'] = (float)($promo['discount_pct'] ?? 0);
+                $product['active_promo_discount_amount'] = (float)($promo['discount_amount'] ?? 0);
+            } else {
+                $product['active_promo_id'] = 0;
+                $product['active_promo_name'] = '';
+                $product['active_promo_discount_pct'] = 0.0;
+                $product['active_promo_discount_amount'] = 0.0;
+            }
+        }
+        unset($product);
+
         $this->render('pos/terminal', [
             'flash' => $this->getFlash(),
-            'products' => $stmt->fetchAll(),
+            'products' => $products,
             'categories' => $categoriesStmt->fetchAll(),
             'csrf' => Auth::csrfGenerate(),
         ]);
@@ -86,7 +108,12 @@ class POSController extends Controller
             $this->json(['success' => false, 'message' => 'Invalid payment method.'], 422);
         }
 
-        $discountAmount = max(0, (float)($payload['discount_amount'] ?? 0));
+        $requestedDiscount = max(0, (float)($payload['discount_amount'] ?? 0));
+        $promoItemIds = $payload['promo_item_ids'] ?? [];
+        if (!is_array($promoItemIds)) {
+            $promoItemIds = [];
+        }
+        $promoItemIds = array_values(array_unique(array_map(static fn($id): int => (int)$id, $promoItemIds)));
         $customerType = (string)($payload['customer_type'] ?? 'regular');
         if (!in_array($customerType, ['regular', 'senior', 'pwd'], true)) {
             $customerType = 'regular';
@@ -123,9 +150,14 @@ class POSController extends Controller
             $this->json(['success' => false, 'message' => 'No valid cart items provided.'], 422);
         }
 
+        // Auto-apply promo computation to all cart items if client did not send explicit promo selections.
+        if (count($promoItemIds) === 0) {
+            $promoItemIds = $productIds;
+        }
+
         $placeholders = implode(',', array_fill(0, count($productIds), '?'));
         $stmt = $db->prepare(
-            "SELECT product_id, product_name, selling_price, avg_cost_price, cost_price, current_stock, is_vatable, primary_supplier_id
+              "SELECT product_id, product_name, category_id, selling_price, avg_cost_price, cost_price, current_stock, is_vatable, primary_supplier_id
              FROM products
              WHERE product_id IN ($placeholders) AND status = 'active'"
         );
@@ -149,6 +181,15 @@ class POSController extends Controller
             $subtotal += (float)$products[$productId]['selling_price'] * $qty;
         }
 
+        $promoDiscountResult = $this->calculatePromotionDiscountForCart($db, $cartMap, $products, $promoItemIds);
+        $promoDiscount = round((float)($promoDiscountResult['total_discount'] ?? 0), 2);
+
+        $customerDiscount = in_array($customerType, ['senior', 'pwd'], true)
+            ? round($subtotal * 0.20, 2)
+            : 0.00;
+
+        // If UI sent a lower discount than server-calculated discount, keep server authoritative value.
+        $discountAmount = max($requestedDiscount, $promoDiscount + $customerDiscount);
         if ($discountAmount > $subtotal) {
             $discountAmount = $subtotal;
         }
@@ -166,9 +207,14 @@ class POSController extends Controller
         $vatableSales = $isVatExempt ? 0.00 : round($totalAmount, 2);
         $vatExemptSales = $isVatExempt ? round($totalAmount, 2) : 0.00;
 
-        $discountType = $discountAmount > 0
-            ? (in_array($customerType, ['senior', 'pwd'], true) ? 'senior_pwd' : 'manual')
-            : 'none';
+        $discountType = 'none';
+        if ($promoDiscount > 0) {
+            $discountType = 'promotional';
+        } elseif ($customerDiscount > 0) {
+            $discountType = 'senior_pwd';
+        } elseif ($discountAmount > 0) {
+            $discountType = 'manual';
+        }
 
         $transactionNumber = $this->generateDocNumber($db, 'transactions', 'transaction_number', TXN_PREFIX);
         $orNumber = $this->generateDocNumber($db, 'transactions', 'or_number', OR_PREFIX);
@@ -248,6 +294,11 @@ class POSController extends Controller
                 ) VALUES (?, ?, ?, 'sale', 0, ?, 'transaction', ?, ?, ?, NOW())"
             );
 
+            $insertPromoUsage = $db->prepare(
+                "INSERT INTO promotion_usage (promo_id, transaction_id, discount_applied, used_at)
+                 VALUES (?, ?, ?, NOW())"
+            );
+
             $replenishmentLines = [];
 
             foreach ($cartMap as $productId => $qty) {
@@ -266,7 +317,7 @@ class POSController extends Controller
                     $unitPrice,
                     $costPrice,
                     (int)$product['is_vatable'],
-                    0.00,
+                    round((float)($promoDiscountResult['line_discounts'][$productId] ?? 0.00), 2),
                     $lineSubtotal,
                 ]);
 
@@ -288,6 +339,16 @@ class POSController extends Controller
                 ];
             }
 
+            if (!empty($promoDiscountResult['usage_by_promo'])) {
+                foreach ($promoDiscountResult['usage_by_promo'] as $promoId => $discountApplied) {
+                    $discountApplied = round((float)$discountApplied, 2);
+                    if ($discountApplied <= 0) {
+                        continue;
+                    }
+                    $insertPromoUsage->execute([(int)$promoId, $transactionId, $discountApplied]);
+                }
+            }
+
             $this->applyCustomerPoints($db, $customerId, $transactionId, $pointsEarned, $pointsRedeemed, $totalAmount);
             $this->applyShiftSales($db, $shiftId, $paymentMethod, $totalAmount);
 
@@ -306,6 +367,8 @@ class POSController extends Controller
                 'auto_po_count' => (int)$autoQueueResult['po_count'],
                 'auto_po_qty' => (int)$autoQueueResult['queued_items'],
                 'auto_po_skipped' => (int)$autoQueueResult['skipped_items'],
+                'promo_discount' => $promoDiscount,
+                'customer_discount' => $customerDiscount,
             ], 'POS checkout completed.');
 
             $db->commit();
@@ -552,6 +615,115 @@ class POSController extends Controller
             }
             $this->json(['success' => false, 'message' => 'Void failed: ' . $e->getMessage()], 500);
         }
+    }
+
+    private function getActivePromotionForProduct(PDO $db, int $productId, int $categoryId, float $unitPrice): ?array
+    {
+        $stmt = $db->prepare(
+            "SELECT DISTINCT p.promo_id, p.promo_name, p.discount_pct, p.discount_amount
+             FROM promotions p
+             LEFT JOIN promotion_products pp ON pp.promo_id = p.promo_id
+             LEFT JOIN promotion_categories pc ON pc.promo_id = p.promo_id
+             WHERE p.status = 'active'
+               AND p.promo_type = 'price_discount'
+                AND (
+                    NOW() BETWEEN p.start_datetime AND p.end_datetime
+                    OR CURDATE() BETWEEN DATE(p.start_datetime) AND DATE(p.end_datetime)
+                )
+               AND (
+                    p.applicable_to = 'all'
+                    OR (p.applicable_to = 'product' AND pp.product_id = ?)
+                    OR (p.applicable_to = 'category' AND pc.category_id = ?)
+               )"
+        );
+        $stmt->execute([$productId, $categoryId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($rows)) {
+            return null;
+        }
+
+        // Choose the promotion with the highest computed per-unit discount.
+        $best = null;
+        $bestValue = 0.0;
+        foreach ($rows as $row) {
+            $pctDiscount = ((float)($row['discount_pct'] ?? 0)) > 0
+                ? $unitPrice * ((float)$row['discount_pct'] / 100)
+                : 0.0;
+            $amtDiscount = (float)($row['discount_amount'] ?? 0);
+            $value = max($pctDiscount, $amtDiscount);
+            if ($value > $bestValue) {
+                $bestValue = $value;
+                $best = $row;
+            }
+        }
+
+        return $best;
+    }
+
+    private function calculatePromotionDiscountForCart(PDO $db, array $cartMap, array $products, array $promoItemIds): array
+    {
+        $selected = array_fill_keys($promoItemIds, true);
+        $lineDiscounts = [];
+        $usageByPromo = [];
+        $totalDiscount = 0.0;
+
+        foreach ($cartMap as $productId => $qty) {
+            if (!isset($selected[$productId])) {
+                $lineDiscounts[$productId] = 0.0;
+                continue;
+            }
+            if (!isset($products[$productId])) {
+                $lineDiscounts[$productId] = 0.0;
+                continue;
+            }
+
+            $product = $products[$productId];
+            $unitPrice = (float)$product['selling_price'];
+            $lineSubtotal = $unitPrice * (int)$qty;
+            if ($lineSubtotal <= 0) {
+                $lineDiscounts[$productId] = 0.0;
+                continue;
+            }
+
+            $promo = $this->getActivePromotionForProduct(
+                $db,
+                (int)$productId,
+                (int)($product['category_id'] ?? 0),
+                $unitPrice
+            );
+            if (!$promo) {
+                $lineDiscounts[$productId] = 0.0;
+                continue;
+            }
+
+            $pct = (float)($promo['discount_pct'] ?? 0);
+            $amt = (float)($promo['discount_amount'] ?? 0);
+            $lineDiscount = 0.0;
+            if ($pct > 0) {
+                $lineDiscount = $lineSubtotal * ($pct / 100);
+            } elseif ($amt > 0) {
+                $lineDiscount = $amt * (int)$qty;
+            }
+
+            if ($lineDiscount > $lineSubtotal) {
+                $lineDiscount = $lineSubtotal;
+            }
+
+            $lineDiscount = round($lineDiscount, 2);
+            $lineDiscounts[$productId] = $lineDiscount;
+            $totalDiscount += $lineDiscount;
+
+            $promoId = (int)($promo['promo_id'] ?? 0);
+            if ($promoId > 0) {
+                $usageByPromo[$promoId] = round(($usageByPromo[$promoId] ?? 0) + $lineDiscount, 2);
+            }
+        }
+
+        return [
+            'total_discount' => round($totalDiscount, 2),
+            'line_discounts' => $lineDiscounts,
+            'usage_by_promo' => $usageByPromo,
+        ];
     }
 
     private function requestPayload(): array
